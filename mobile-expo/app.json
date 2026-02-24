@@ -2,7 +2,7 @@
   "expo": {
     "name": "AutoZap",
     "slug": "autozap-mobile",
-    "version": "1.0.1",
+    "version": "1.0.2",
     "orientation": "portrait",
     "icon": "./assets/icon.png",
     "userInterfaceStyle": "light",
@@ -10,7 +10,7 @@
     "splash": {
       "image": "./assets/splash-icon.png",
       "resizeMode": "contain",
-      "backgroundColor": "#ffffff"
+      "backgroundColor": "#0B5BD3"
     },
     "ios": {
       "supportsTablet": true
@@ -19,13 +19,13 @@
       "package": "com.autozap.mobileexpo",
       "adaptiveIcon": {
         "foregroundImage": "./assets/adaptive-icon.png",
-        "backgroundColor": "#ffffff"
+        "backgroundColor": "#0B5BD3"
       },
       "edgeToEdgeEnabled": false,
       "predictiveBackGestureEnabled": false
     },
     "extra": {
-      "apiBaseUrl": "http://127.0.0.1:3000"
+      "apiBaseUrl": "https://autozap-api-7hf5lkloja-uc.a.run.app"
     },
     "web": {
       "favicon": "./assets/favicon.png"

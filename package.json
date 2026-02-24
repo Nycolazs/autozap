@@ -1,6 +1,6 @@
 {
   "name": "autozap",
-  "version": "1.0.1",
+  "version": "1.0.2",
   "private": true,
   "description": "AutoZap - atendimento WhatsApp com Next.js + desktop (macOS/Windows) + Firebase + WhatsApp Cloud API",
   "author": "Nycolazs",
@@ -18,6 +18,7 @@
     "dev": "NODE_ENV=development node server.js",
     "build": "next build",
     "start": "NODE_ENV=production node server.js",
+    "assets:brand": "node ./scripts/generate-brand-assets.js",
     "start:server": "node server.js",
     "firebase:deploy:webhook": "npx firebase-tools deploy --only functions:whatsappWebhook --project autozap-4537e",
     "firebase:logs:webhook": "npx firebase-tools functions:log --only whatsappWebhook --project autozap-4537e",
@@ -96,6 +97,7 @@
         "dmg",
         "zip"
       ],
+      "icon": "electron/assets/icon.icns",
       "category": "public.app-category.business"
     },
     "win": {

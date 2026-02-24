@@ -1,0 +1,17 @@
+<svg width="1024" height="1024" viewBox="0 0 1024 1024" fill="none" xmlns="http://www.w3.org/2000/svg">
+  <defs>
+    <linearGradient id="bolt" x1="456" y1="316" x2="672" y2="676" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#FFE47C"/>
+      <stop offset="1" stop-color="#FF9A2F"/>
+    </linearGradient>
+    <filter id="glyphShadow" x="220" y="220" width="612" height="612" filterUnits="userSpaceOnUse">
+      <feDropShadow dx="0" dy="12" stdDeviation="14" flood-color="#001B3A" flood-opacity="0.18"/>
+    </filter>
+  </defs>
+
+  <g filter="url(#glyphShadow)">
+    <rect x="228" y="238" width="568" height="430" rx="176" fill="#FFFFFF"/>
+    <path d="M378 644L302 798L486 680L378 644Z" fill="#FFFFFF"/>
+  </g>
+  <path d="M568 336L454 522H548L478 692L674 454H574L638 336H568Z" fill="url(#bolt)"/>
+</svg>
