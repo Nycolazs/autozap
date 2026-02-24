@@ -25,8 +25,14 @@ jobs:
       - name: Install dependencies
         run: npm ci
 
-      - name: Configure local runtime
-        run: npm run desktop:config:local
+      - name: Configure cloud runtime
+        run: |
+          $target = "${{ vars.AUTOZAP_TARGET_SERVER_URL }}"
+          if ([string]::IsNullOrWhiteSpace($target)) {
+            $target = "https://autozap-api-7hf5lkloja-uc.a.run.app"
+          }
+          $env:AUTOZAP_TARGET_SERVER_URL = $target
+          npm run desktop:config:cloud
 
       - name: Build Next.js
         run: npm run build
