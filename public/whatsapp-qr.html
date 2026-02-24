@@ -1,0 +1,302 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover" />
+  <meta name="theme-color" content="#0b1220">
+  <meta name="color-scheme" content="light">
+  <meta name="application-name" content="AutoZap">
+  <meta name="mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+  <meta name="apple-mobile-web-app-title" content="AutoZap">
+  <meta name="format-detection" content="telephone=no">
+  <link rel="manifest" href="/manifest.json">
+  <link rel="icon" type="image/png" sizes="192x192" href="/icon-192.png">
+  <link rel="icon" type="image/png" sizes="512x512" href="/icon-512.png">
+  <link rel="apple-touch-icon" href="/icon-180.png">
+  <title>Conectar WhatsApp - API Oficial</title>
+  <style>
+    * {
+      margin: 0;
+      padding: 0;
+      box-sizing: border-box;
+    }
+
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, Cantarell, sans-serif;
+      background: linear-gradient(135deg, #0f2027 0%, #203a43 50%, #2c5364 100%);
+      min-height: 100vh;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      padding: 20px;
+      color: #111;
+    }
+
+    .card {
+      background: #fff;
+      border-radius: 16px;
+      box-shadow: 0 25px 60px rgba(0, 0, 0, 0.35);
+      width: 100%;
+      max-width: 520px;
+      padding: 32px;
+      text-align: center;
+    }
+
+    .title {
+      font-size: 24px;
+      margin-bottom: 8px;
+      color: #0f172a;
+    }
+
+    .subtitle {
+      color: #475569;
+      font-size: 14px;
+      margin-bottom: 24px;
+    }
+
+    .qr-box {
+      width: 100%;
+      border: 1px dashed #cbd5e1;
+      border-radius: 12px;
+      padding: 20px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      min-height: 260px;
+      background: #f8fafc;
+    }
+
+    #qrImage {
+      width: 260px;
+      height: 260px;
+      image-rendering: pixelated;
+    }
+
+    .status {
+      margin-top: 16px;
+      font-size: 14px;
+      color: #334155;
+    }
+
+    .status strong {
+      color: #0f172a;
+    }
+
+    .steps {
+      text-align: left;
+      margin-top: 24px;
+      background: #f1f5f9;
+      border-radius: 12px;
+      padding: 16px;
+      font-size: 14px;
+      color: #334155;
+    }
+
+    .steps li {
+      margin-left: 18px;
+      margin-bottom: 8px;
+    }
+
+    .actions {
+      margin-top: 20px;
+      display: flex;
+      gap: 10px;
+      justify-content: center;
+      flex-wrap: wrap;
+    }
+
+    .btn {
+      border: none;
+      cursor: pointer;
+      padding: 10px 16px;
+      border-radius: 8px;
+      font-size: 14px;
+      font-weight: 600;
+      transition: all 0.2s ease;
+    }
+
+    .btn-primary {
+      background: #22c55e;
+      color: #fff;
+    }
+
+    .btn-primary:hover {
+      background: #16a34a;
+    }
+
+    .btn-secondary {
+      background: #e2e8f0;
+      color: #0f172a;
+    }
+
+    .btn-secondary:hover {
+      background: #cbd5e1;
+    }
+
+    .connected {
+      color: #16a34a;
+      font-weight: 700;
+    }
+
+    .muted {
+      color: #64748b;
+    }
+  </style>
+  <link rel="stylesheet" href="/ui.css">
+</head>
+<body>
+  <div class="card">
+  <script src="/config.js"></script>
+  <script src="/ui.js"></script>
+    <h1 class="title">🔐 Conectar WhatsApp</h1>
+    <p class="subtitle">Integração via API oficial (WhatsApp Cloud API).</p>
+
+    <div class="qr-box">
+      <img id="qrImage" alt="QR Code" style="display:none" />
+      <div id="qrPlaceholder" class="muted">Validando configuração da API oficial...</div>
+    </div>
+
+    <div class="status" id="statusText">Status: <strong>Iniciando...</strong></div>
+
+    <ul class="steps">
+      <li>Crie o app no <strong>Meta for Developers</strong></li>
+      <li>Configure <strong>WA_CLOUD_ACCESS_TOKEN</strong></li>
+      <li>Configure <strong>WA_CLOUD_PHONE_NUMBER_ID</strong></li>
+      <li>Configure <strong>WA_CLOUD_VERIFY_TOKEN</strong> e o webhook <code>/whatsapp/webhook</code></li>
+    </ul>
+
+    <div class="actions">
+      <button class="btn btn-secondary" id="refreshQrBtn">Validar Configuração</button>
+    </div>
+  </div>
+
+  <script>
+    const qrImage = document.getElementById('qrImage');
+    const qrPlaceholder = document.getElementById('qrPlaceholder');
+    const statusText = document.getElementById('statusText');
+
+    let pollingId = null;
+    let connectedStreak = 0;
+    let redirecting = false;
+
+    function setStatus(text, isConnected = false) {
+      statusText.innerHTML = `Status: <strong class="${isConnected ? 'connected' : ''}">${text}</strong>`;
+    }
+
+    async function loadQr() {
+      try {
+        const fetchFn = (typeof smartJson === 'function')
+          ? smartJson
+          : async (u, o) => {
+              const r = await fetch(u, o);
+              if (!r.ok) throw new Error(`HTTP ${r.status}`);
+              return r.json();
+            };
+
+        const data = await fetchFn('/whatsapp/qr', { cache: 'no-store', maxRetries: 1 });
+
+        const isConnected = !!data.connected || !!data.stableConnected;
+        const isOfficialProvider = data.provider === 'whatsapp_cloud_api';
+        const needsQr = !isOfficialProvider && (!!data.qrDataUrl || data.connectionState === 'qr');
+
+        if (isConnected) {
+          connectedStreak += 1;
+        } else {
+          connectedStreak = 0;
+        }
+
+        // Only redirect after the connection stays up for a couple polls.
+        if (isConnected && connectedStreak >= 2) {
+          if (redirecting) return;
+          redirecting = true;
+          qrImage.style.display = 'none';
+          qrPlaceholder.style.display = 'block';
+          qrPlaceholder.textContent = 'WhatsApp conectado ✅';
+          setStatus('Conectado', true);
+          setTimeout(async () => {
+            try {
+              const info = await fetchFn('/auth/has-admin', { cache: 'no-store', maxRetries: 1 });
+              if (typeof navigateTo === 'function') navigateTo(info.hasAdmin ? '/login' : '/welcome'); else window.location.href = info.hasAdmin ? '/login' : '/welcome';
+            } catch (error) {
+              if (typeof navigateTo === 'function') navigateTo('/welcome'); else window.location.href = '/welcome';
+            }
+          }, 800);
+          return;
+        }
+
+        if (isOfficialProvider) {
+          qrImage.style.display = 'none';
+          qrPlaceholder.style.display = 'block';
+          qrPlaceholder.textContent = data.message || 'Configure as variáveis da WhatsApp Cloud API e valide novamente.';
+          setStatus(data.setupRequired ? 'Configuração pendente' : 'Aguardando integração');
+          return;
+        }
+
+        if (needsQr && data.qrDataUrl) {
+          qrImage.src = data.qrDataUrl;
+          qrImage.style.display = 'block';
+          qrPlaceholder.style.display = 'none';
+          setStatus('Aguardando leitura do QR');
+          return;
+        }
+
+        qrImage.style.display = 'none';
+        qrPlaceholder.style.display = 'block';
+
+        if (needsQr) {
+          qrPlaceholder.textContent = 'Gerando QR Code...';
+          setStatus('Aguardando QR');
+        } else {
+          // Reconnecting/starting: avoid confusing users with QR flashes
+          const code = data.lastDisconnectCode;
+          const reason = (data.lastDisconnectReason || '').toLowerCase();
+          const replaced = reason.includes('replaced') || reason.includes('conflict') || String(code) === '440';
+          qrPlaceholder.textContent = replaced
+            ? 'Sessão desconectada (conexão substituída). Abra o WhatsApp e reconecte por aqui.'
+            : 'Reconectando ao WhatsApp...';
+          setStatus(replaced ? 'Sessão substituída' : 'Reconectando');
+        }
+      } catch (error) {
+        qrImage.style.display = 'none';
+        qrPlaceholder.style.display = 'block';
+        qrPlaceholder.textContent = 'Erro ao validar integração.';
+        setStatus('Erro ao consultar API');
+      }
+    }
+
+    async function refreshQr() {
+      try {
+        const fn = (typeof smartFetch === 'function') ? smartFetch : fetch;
+        await fn('/whatsapp/qr/refresh', { method: 'POST' });
+      } catch (error) {
+        // Ignora
+      }
+      loadQr();
+    }
+
+    function schedulePolling(delayMs) {
+      if (pollingId) clearTimeout(pollingId);
+      pollingId = setTimeout(async () => {
+        await loadQr();
+        const base = document.hidden ? 8000 : 2000;
+        const jitter = Math.floor(Math.random() * 250);
+        schedulePolling(base + jitter);
+      }, delayMs);
+    }
+
+    document.addEventListener('DOMContentLoaded', () => {
+      const refreshBtn = document.getElementById('refreshQrBtn');
+      if (refreshBtn) {
+        refreshBtn.addEventListener('click', refreshQr);
+      }
+      schedulePolling(200);
+
+      document.addEventListener('visibilitychange', () => {
+        if (!document.hidden) schedulePolling(200);
+      });
+    });
+  </script>
+</body>
+</html>

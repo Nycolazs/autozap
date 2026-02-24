@@ -1,0 +1,17 @@
+node_modules
+.next
+.env
+.env.local
+.env.*.local
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+.DS_Store
+coverage
+data
+dist-electron
+media
+.firebase
+firebase-service-account.json
+firebase-service-account.local.json

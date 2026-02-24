@@ -1,0 +1,99 @@
+{
+  "name": "autozap",
+  "version": "1.0.0",
+  "private": true,
+  "description": "AutoZap - atendimento WhatsApp com Next.js + desktop (macOS/Windows) + Firebase + WhatsApp Cloud API",
+  "author": "Nycolazs",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/Nycolazs/autozap.git"
+  },
+  "homepage": "https://github.com/Nycolazs/autozap",
+  "bugs": {
+    "url": "https://github.com/Nycolazs/autozap/issues"
+  },
+  "main": "electron/main.js",
+  "type": "commonjs",
+  "scripts": {
+    "dev": "NODE_ENV=development node server.js",
+    "build": "next build",
+    "start": "NODE_ENV=production node server.js",
+    "start:server": "node server.js",
+    "firebase:deploy:webhook": "npx firebase-tools deploy --only functions:whatsappWebhook --project autozap-4537e",
+    "firebase:logs:webhook": "npx firebase-tools functions:log --only whatsappWebhook --project autozap-4537e",
+    "desktop:config:local": "node ./scripts/write-runtime-config.js --mode=local",
+    "desktop:config:cloud": "node ./scripts/write-runtime-config.js --mode=cloud",
+    "desktop:dev": "cross-env AUTOZAP_SERVER_URL=http://127.0.0.1:3000 AUTOZAP_SERVER_MANAGED_EXTERNALLY=1 concurrently -k \"npm run dev\" \"wait-on tcp:3000 && electron ./electron/main.js\"",
+    "desktop:start": "npm run desktop:config:local && npm run build && cross-env NODE_ENV=production FRONTEND_REQUIRE_DESKTOP=1 electron ./electron/main.js",
+    "desktop:pack": "npm run desktop:config:local && npm run build && electron-builder --dir",
+    "desktop:dist:mac": "npm run desktop:config:local && npm run build && electron-builder --mac dmg zip",
+    "desktop:dist:win": "npm run desktop:config:local && npm run build && electron-builder --win nsis zip",
+    "desktop:dist:win:x64": "npm run desktop:config:local && npm run build && electron-builder --win nsis zip --x64 -c.win.signAndEditExecutable=false",
+    "desktop:dist:mac:cloud": "npm run desktop:config:cloud && npm run build && electron-builder --mac dmg zip",
+    "desktop:dist:win:cloud": "npm run desktop:config:cloud && npm run build && electron-builder --win nsis zip"
+  },
+  "dependencies": {
+    "axios": "^1.13.5",
+    "bcrypt": "^6.0.0",
+    "better-sqlite3": "^12.6.2",
+    "better-sqlite3-session-store": "^0.1.0",
+    "cors": "^2.8.6",
+    "dotenv": "^17.3.1",
+    "express": "^5.2.1",
+    "express-rate-limit": "^8.2.1",
+    "express-session": "^1.19.0",
+    "firebase-admin": "^13.6.1",
+    "form-data": "^4.0.5",
+    "helmet": "^8.1.0",
+    "multer": "^2.0.2",
+    "next": "^16.1.6",
+    "react": "^19.2.4",
+    "react-dom": "^19.2.4",
+    "ws": "^8.19.0",
+    "zod": "^4.3.6"
+  },
+  "devDependencies": {
+    "concurrently": "^9.2.1",
+    "cross-env": "^10.1.0",
+    "electron": "^40.6.0",
+    "electron-builder": "^26.8.1",
+    "wait-on": "^9.0.4"
+  },
+  "build": {
+    "appId": "com.autozap.desktop",
+    "productName": "AutoZap",
+    "asar": true,
+    "files": [
+      "electron/**/*",
+      "server.js",
+      "next.config.mjs",
+      "app/**/*",
+      ".next/**/*",
+      "public/**/*",
+      "src/**/*",
+      "package.json"
+    ],
+    "directories": {
+      "output": "dist-electron",
+      "buildResources": "electron/assets"
+    },
+    "mac": {
+      "target": [
+        "dmg",
+        "zip"
+      ],
+      "category": "public.app-category.business"
+    },
+    "win": {
+      "target": [
+        "nsis",
+        "zip"
+      ]
+    },
+    "nsis": {
+      "oneClick": false,
+      "allowToChangeInstallationDirectory": true
+    },
+    "publish": null
+  }
+}

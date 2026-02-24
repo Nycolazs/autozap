@@ -1,0 +1,17 @@
+{
+  "name": "autozap-functions",
+  "private": true,
+  "main": "index.js",
+  "engines": {
+    "node": "20"
+  },
+  "scripts": {
+    "serve": "firebase emulators:start --only functions",
+    "deploy": "firebase deploy --only functions:whatsappWebhook --project autozap-4537e",
+    "logs": "firebase functions:log --only whatsappWebhook --project autozap-4537e"
+  },
+  "dependencies": {
+    "firebase-admin": "^13.6.1",
+    "firebase-functions": "^7.0.5"
+  }
+}
