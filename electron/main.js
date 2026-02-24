@@ -4,6 +4,7 @@ const fs = require('fs');
 const os = require('os');
 const path = require('path');
 const http = require('http');
+const https = require('https');
 const { Readable } = require('stream');
 const { pipeline } = require('stream/promises');
 const { app, BrowserWindow, shell, session, dialog } = require('electron');
@@ -368,7 +369,16 @@ function wait(ms) {
 
 function probeServer(url) {
   return new Promise((resolve) => {
-    const req = http.get(`${url}/healthz`, (res) => {
+    let target = null;
+    try {
+      target = new URL(`${String(url || '').replace(/\/+$/, '')}/healthz`);
+    } catch (_) {
+      resolve(false);
+      return;
+    }
+
+    const client = target.protocol === 'https:' ? https : http;
+    const req = client.get(target, (res) => {
       res.resume();
       resolve(res.statusCode >= 200 && res.statusCode < 500);
     });
