@@ -213,6 +213,8 @@ function initSchema(db) {
       sender_name TEXT,
       reply_to_id INTEGER,
       whatsapp_message_id TEXT,
+      message_status TEXT,
+      message_status_updated_at DATETIME,
       created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
       updated_at DATETIME DEFAULT CURRENT_TIMESTAMP,
       FOREIGN KEY (ticket_id) REFERENCES tickets(id),
@@ -254,9 +256,21 @@ function initSchema(db) {
   try { db.prepare('ALTER TABLE messages ADD COLUMN whatsapp_key TEXT').run(); } catch (err) { if (!String(err.message || '').includes('duplicate column')) {} }
   try { db.prepare('ALTER TABLE messages ADD COLUMN whatsapp_message TEXT').run(); } catch (err) { if (!String(err.message || '').includes('duplicate column')) {} }
   try { db.prepare('ALTER TABLE messages ADD COLUMN whatsapp_message_id TEXT').run(); } catch (err) { if (!String(err.message || '').includes('duplicate column')) {} }
+  try { db.prepare('ALTER TABLE messages ADD COLUMN message_status TEXT').run(); } catch (err) { if (!String(err.message || '').includes('duplicate column')) {} }
+  try { db.prepare('ALTER TABLE messages ADD COLUMN message_status_updated_at DATETIME').run(); } catch (err) { if (!String(err.message || '').includes('duplicate column')) {} }
 
   // Backfill: se updated_at estiver nulo, usa created_at
   try { db.prepare('UPDATE messages SET updated_at = created_at WHERE updated_at IS NULL').run(); } catch (_) {}
+  try {
+    db.prepare(`
+      UPDATE messages
+      SET message_status = 'sent',
+          message_status_updated_at = COALESCE(message_status_updated_at, created_at)
+      WHERE sender = 'agent'
+        AND whatsapp_message_id IS NOT NULL
+        AND (message_status IS NULL OR TRIM(message_status) = '')
+    `).run();
+  } catch (_) {}
 
   try {
     db.exec(`
@@ -278,6 +292,7 @@ function initSchema(db) {
       CREATE INDEX IF NOT EXISTS idx_messages_ticket_sender ON messages(ticket_id, sender);
       CREATE INDEX IF NOT EXISTS idx_messages_reply_to_id ON messages(reply_to_id);
       CREATE INDEX IF NOT EXISTS idx_messages_whatsapp_message_id ON messages(whatsapp_message_id);
+      CREATE INDEX IF NOT EXISTS idx_messages_ticket_status ON messages(ticket_id, message_status);
 
       CREATE INDEX IF NOT EXISTS idx_reminders_ticket_id ON ticket_reminders(ticket_id);
       CREATE INDEX IF NOT EXISTS idx_reminders_seller_id ON ticket_reminders(seller_id);

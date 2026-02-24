@@ -36,13 +36,14 @@ const { installGracefulShutdown } = require('./src/server/server/gracefulShutdow
 const { attachRealtimeWebSocket } = require('./src/server/server/realtime-ws');
 const { createSessionMiddleware } = require('./src/server/session/createSessionMiddleware');
 const { createLogger } = require('./src/server/logger');
+const { resolveAuthIdentity } = require('./src/server/middleware/auth');
 
 const logger = createLogger('server');
 
 const dev = process.env.NODE_ENV !== 'production';
 const nextApp = next({ dev });
 const nextHandler = nextApp.getRequestHandler();
-const DESKTOP_RUNTIME_HEADERS = new Set(['desktop', 'electron', 'proton']);
+const APP_RUNTIME_HEADERS = new Set(['desktop', 'electron', 'proton', 'mobile', 'capacitor']);
 const FRONTEND_ROUTES = new Set([
   '/',
   '/login',
@@ -52,20 +53,46 @@ const FRONTEND_ROUTES = new Set([
   '/whatsapp-qr',
   '/setup-admin',
 ]);
+const FRONTEND_STATIC_PATHS = new Set([
+  '/manifest.json',
+  '/favicon.ico',
+]);
+const FRONTEND_STATIC_PREFIXES = [
+  '/_next/',
+  '/icons/',
+];
 
 function isFrontendRequest(pathname) {
   const pathValue = String(pathname || '');
   if (FRONTEND_ROUTES.has(pathValue)) return true;
-  if (pathValue.startsWith('/_next/')) return true;
-  if (pathValue.startsWith('/icon-')) return true;
-  if (pathValue === '/manifest.json' || pathValue === '/sw.js' || pathValue === '/ui.js' || pathValue === '/ui.css' || pathValue === '/config.js') return true;
-  if (pathValue.endsWith('.html') || pathValue.endsWith('.css') || pathValue.endsWith('.js')) return true;
+  if (FRONTEND_STATIC_PATHS.has(pathValue)) return true;
+  if (/^\/icon-\d+\.png$/i.test(pathValue)) return true;
+  if (FRONTEND_STATIC_PREFIXES.some((prefix) => pathValue.startsWith(prefix))) return true;
   return false;
 }
 
-function isDesktopRuntimeRequest(req) {
+function isAppRuntimeRequest(req) {
   const runtimeHeader = String((req.headers['x-autozap-runtime'] || req.headers['x-whatsapp-system-runtime'] || '')).trim().toLowerCase();
-  return DESKTOP_RUNTIME_HEADERS.has(runtimeHeader);
+  if (APP_RUNTIME_HEADERS.has(runtimeHeader)) return true;
+
+  const requestedWith = String(req.headers['x-requested-with'] || '').trim().toLowerCase();
+  if (requestedWith.includes('autozap')) return true;
+
+  const origin = String(req.headers.origin || '').trim().toLowerCase();
+  if (
+    origin.startsWith('capacitor://localhost')
+    || origin.startsWith('ionic://localhost')
+    || origin.startsWith('http://localhost')
+    || origin.startsWith('https://localhost')
+  ) {
+    return true;
+  }
+
+  const userAgent = String(req.headers['user-agent'] || '').toLowerCase();
+  if (userAgent.includes('electron/')) return true;
+  if (userAgent.includes('android') && userAgent.includes('wv')) return true;
+
+  return false;
 }
 
 function getAdminCount() {
@@ -324,9 +351,9 @@ async function bootstrap() {
     app.use((req, res, next) => {
       const pathname = String(req.path || '');
       if (!isFrontendRequest(pathname)) return next();
-      if (isDesktopRuntimeRequest(req)) return next();
+      if (isAppRuntimeRequest(req)) return next();
       return res.status(403).json({
-        error: 'Frontend disponível apenas no aplicativo desktop (macOS/Windows).',
+        error: 'Frontend disponível apenas no aplicativo AutoZap.',
       });
     });
   }
@@ -364,6 +391,26 @@ async function bootstrap() {
     },
   });
 
+  const uploadImage = multer({
+    storage: multer.diskStorage({
+      destination: (_req, _file, cb) => cb(null, imageDir),
+      filename: (_req, file, cb) => {
+        const timestamp = Date.now();
+        const random = Math.random().toString(36).slice(2, 8);
+        const ext = imageExtFromMime(file && file.mimetype, file && file.originalname);
+        cb(null, `image_${timestamp}_${random}${ext}`);
+      },
+    }),
+    limits: { fileSize: Number(process.env.IMAGE_UPLOAD_MAX_BYTES || (15 * 1024 * 1024)) },
+    fileFilter: (_req, file, cb) => {
+      if (String(file.mimetype || '').startsWith('image/')) {
+        cb(null, true);
+      } else {
+        cb(new Error('Apenas arquivos de imagem são permitidos'));
+      }
+    },
+  });
+
   const uploadProfileImage = multer({
     storage: multer.diskStorage({
       destination: (_req, _file, cb) => cb(null, profileDir),
@@ -396,7 +443,27 @@ async function bootstrap() {
   const service = whatsappService;
   const whatsappClient = service.client || service;
 
-  app.get('/media/wa/:mediaId', requireAuth, async (req, res) => {
+  function requireMediaAuth(req, res, next) {
+    try {
+      if (!req.headers.authorization && req.query && req.query.auth) {
+        const token = String(req.query.auth || '').trim();
+        if (token) {
+          req.headers.authorization = `Bearer ${token}`;
+        }
+      }
+    } catch (_) {}
+
+    const identity = resolveAuthIdentity(req);
+    if (!identity) {
+      return res.status(401).json({ error: 'Não autenticado' });
+    }
+    req.userId = identity.userId;
+    req.userType = identity.userType;
+    req.userName = identity.userName;
+    return next();
+  }
+
+  app.get('/media/wa/:mediaId', requireMediaAuth, async (req, res) => {
     try {
       const mediaId = String(req.params.mediaId || '').trim();
       if (!mediaId) {
@@ -468,7 +535,14 @@ async function bootstrap() {
   app.use(createWhatsAppRouter({ whatsappClient, db, requireAdmin }));
   app.use(createAuthRouter({ db, hashPassword, verifyPassword, getQrState: service.getQrState }));
   app.use(createUsersRouter({ db, hashPassword, requireAuth, requireAdmin, getAdminCount }));
-  app.use(createTicketsRouter({ db, requireAuth, requireAdmin, getSocket: service.getSocket, uploadAudio }));
+  app.use(createTicketsRouter({
+    db,
+    requireAuth,
+    requireAdmin,
+    getSocket: service.getSocket,
+    uploadAudio,
+    uploadImage,
+  }));
   app.use(createBlacklistRouter({ db, requireAdmin }));
   app.use(createContactsRouter({
     getSocket: service.getSocket,

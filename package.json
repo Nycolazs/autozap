@@ -1,6 +1,6 @@
 {
   "name": "autozap",
-  "version": "1.0.0",
+  "version": "1.0.1",
   "private": true,
   "description": "AutoZap - atendimento WhatsApp com Next.js + desktop (macOS/Windows) + Firebase + WhatsApp Cloud API",
   "author": "Nycolazs",
@@ -31,13 +31,16 @@
     "desktop:dist:win:x64": "npm run desktop:config:local && npm run build && electron-builder --win nsis zip --x64 -c.win.signAndEditExecutable=false",
     "desktop:dist:mac:cloud": "npm run desktop:config:cloud && npm run build && electron-builder --mac dmg zip",
     "desktop:dist:win:cloud": "npm run desktop:config:cloud && npm run build && electron-builder --win nsis zip",
-    "android:sync": "npx @capacitor/cli sync android",
-    "android:open": "npx @capacitor/cli open android",
-    "android:build:debug": "cd android && ./gradlew assembleDebug"
+    "mobile:install": "npm --prefix ./mobile-expo install",
+    "mobile:dev": "concurrently -k \"npm run dev\" \"npm --prefix ./mobile-expo run start\"",
+    "mobile:start": "npm --prefix ./mobile-expo run start",
+    "mobile:android": "npm --prefix ./mobile-expo run android",
+    "mobile:ios": "npm --prefix ./mobile-expo run ios",
+    "mobile:web": "npm --prefix ./mobile-expo run web",
+    "mobile:typecheck": "npm --prefix ./mobile-expo run typecheck",
+    "mobile:adb:reverse": "adb reverse tcp:3000 tcp:3000"
   },
   "dependencies": {
-    "@capacitor/android": "^8.1.0",
-    "@capacitor/core": "^8.1.0",
     "axios": "^1.13.5",
     "bcrypt": "^6.0.0",
     "better-sqlite3": "^12.6.2",
@@ -54,15 +57,19 @@
     "next": "^16.1.6",
     "react": "^19.2.4",
     "react-dom": "^19.2.4",
+    "sharp": "^0.34.5",
     "ws": "^8.19.0",
     "zod": "^4.3.6"
   },
   "devDependencies": {
-    "@capacitor/cli": "^8.1.0",
+    "@types/node": "^25.3.0",
+    "@types/react": "^19.2.14",
+    "@types/react-dom": "^19.2.3",
     "concurrently": "^9.2.1",
     "cross-env": "^10.1.0",
     "electron": "^40.6.0",
     "electron-builder": "^26.8.1",
+    "typescript": "^5.9.3",
     "wait-on": "^9.0.4"
   },
   "build": {
@@ -72,7 +79,7 @@
     "files": [
       "electron/**/*",
       "server.js",
-      "next.config.mjs",
+      "next.config.ts",
       "app/**/*",
       ".next/**/*",
       "public/**/*",
@@ -80,6 +87,7 @@
       "package.json"
     ],
     "directories": {
+      "app": ".",
       "output": "dist-electron",
       "buildResources": "electron/assets"
     },

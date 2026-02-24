@@ -1,5 +1,24 @@
 {
   "appId": "com.autozap.mobile",
   "appName": "AutoZap",
-  "webDir": "public"
+  "webDir": "public",
+  "server": {
+    "url": "http://127.0.0.1:3000/login",
+    "cleartext": true,
+    "allowNavigation": [
+      "127.0.0.1",
+      "localhost"
+    ]
+  },
+  "plugins": {
+    "SystemBars": {
+      "style": "LIGHT",
+      "insetsHandling": "css"
+    },
+    "StatusBar": {
+      "overlaysWebView": false,
+      "style": "LIGHT",
+      "backgroundColor": "#FFFFFF"
+    }
+  }
 }

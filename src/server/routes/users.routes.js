@@ -22,7 +22,7 @@ function createUsersRouter({
   });
 
   // Lista de responsáveis para atribuição (inclui admins como sellers ativos)
-  router.get('/assignees', requireAdmin, (_req, res) => {
+  router.get('/assignees', requireAuth, (_req, res) => {
     try {
       const admins = db.prepare("SELECT id, username as name FROM users WHERE role = 'admin' ORDER BY username").all();
 

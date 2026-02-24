@@ -3,6 +3,7 @@
 const { WebSocketServer } = require('ws');
 const { URL } = require('url');
 const events = require('./events');
+const { resolveAuthIdentity } = require('../middleware/auth');
 
 function makeDummyResponse() {
   const headers = new Map();
@@ -30,13 +31,23 @@ function attachRealtimeWebSocket({ server, sessionMiddleware, allowedOrigins, pa
       const requestUrl = new URL(req.url, 'http://localhost');
       if (requestUrl.pathname !== path) return;
 
+      const authToken = String(requestUrl.searchParams.get('auth') || '').trim();
+      if (authToken && !req.headers.authorization) {
+        req.headers.authorization = `Bearer ${authToken}`;
+      }
+
       const res = makeDummyResponse();
       sessionMiddleware(req, res, () => {
-        if (!req.session || !req.session.userId) {
+        const identity = resolveAuthIdentity(req);
+        if (!identity) {
           socket.write('HTTP/1.1 401 Unauthorized\r\n\r\n');
           socket.destroy();
           return;
         }
+
+        req.userId = identity.userId;
+        req.userType = identity.userType;
+        req.userName = identity.userName;
 
         wss.handleUpgrade(req, socket, head, (ws) => {
           wss.emit('connection', ws, req);

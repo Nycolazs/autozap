@@ -5,6 +5,12 @@ const { spawn } = require('child_process');
 const { validate, schemas } = require('../middleware/validation');
 const { auditMiddleware } = require('../middleware/audit');
 const events = require('../server/events');
+let sharp = null;
+try {
+  sharp = require('sharp');
+} catch (_) {
+  sharp = null;
+}
 
 const DEBUG_TICKETS_REPLY = process.env.DEBUG_TICKETS_REPLY === '1';
 const STATUS_LABELS = {
@@ -36,6 +42,7 @@ function createTicketsRouter({
   requireAdmin,
   getSocket,
   uploadAudio,
+  uploadImage,
 }) {
   const router = express.Router();
 
@@ -60,6 +67,97 @@ function createTicketsRouter({
       'audio/ogg',
       'audio/opus',
     ].includes(mime);
+  }
+
+  function normalizeUploadImageMime(file) {
+    const rawMime = String((file && file.mimetype) || '').toLowerCase().trim();
+    if (rawMime.startsWith('image/')) return rawMime;
+
+    const ext = String(path.extname((file && file.originalname) || '') || '').toLowerCase();
+    if (ext === '.png') return 'image/png';
+    if (ext === '.webp') return 'image/webp';
+    if (ext === '.gif') return 'image/gif';
+    return 'image/jpeg';
+  }
+
+  function normalizeImageOutputMime(inputMime) {
+    const mime = String(inputMime || '').toLowerCase().trim();
+    if (!mime) return 'image/jpeg';
+    if (mime === 'image/png') return 'image/png';
+    if (mime === 'image/webp') return 'image/webp';
+    if (mime === 'image/gif') return 'image/gif';
+    if (mime === 'image/heic' || mime === 'image/heif') return 'image/jpeg';
+    if (mime === 'image/jpg' || mime === 'image/jpeg') return 'image/jpeg';
+    return 'image/jpeg';
+  }
+
+  async function normalizeImageFileForWhatsApp(file) {
+    const initialPath = String((file && file.path) || '').trim();
+    if (!initialPath) {
+      return {
+        filePath: initialPath,
+        mimeType: normalizeUploadImageMime(file),
+      };
+    }
+
+    const uploadedMimeType = normalizeUploadImageMime(file);
+    const targetMimeType = normalizeImageOutputMime(uploadedMimeType);
+
+    if (!sharp || targetMimeType === 'image/gif') {
+      return {
+        filePath: initialPath,
+        mimeType: uploadedMimeType,
+      };
+    }
+
+    try {
+      const sourceBuffer = await fs.promises.readFile(initialPath);
+      if (!sourceBuffer || sourceBuffer.length === 0) {
+        return {
+          filePath: initialPath,
+          mimeType: uploadedMimeType,
+        };
+      }
+
+      let transformer = sharp(sourceBuffer, { failOn: 'none' }).rotate();
+      if (targetMimeType === 'image/png') {
+        transformer = transformer.png({ compressionLevel: 9, adaptiveFiltering: true });
+      } else if (targetMimeType === 'image/webp') {
+        transformer = transformer.webp({ quality: 90 });
+      } else {
+        transformer = transformer.jpeg({ quality: 90, mozjpeg: true });
+      }
+
+      const normalizedBuffer = await transformer.toBuffer();
+      let normalizedPath = initialPath;
+
+      if (targetMimeType === 'image/jpeg' && !/\.jpe?g$/i.test(initialPath)) {
+        normalizedPath = `${initialPath}.jpg`;
+      }
+
+      await fs.promises.writeFile(normalizedPath, normalizedBuffer);
+
+      if (normalizedPath !== initialPath) {
+        try {
+          await fs.promises.unlink(initialPath);
+        } catch (_) {}
+      }
+
+      file.path = normalizedPath;
+      file.filename = path.basename(normalizedPath);
+      file.mimetype = targetMimeType;
+
+      return {
+        filePath: normalizedPath,
+        mimeType: targetMimeType,
+      };
+    } catch (err) {
+      console.warn(`[image-normalize] Falha ao normalizar orientação da imagem: ${String((err && err.message) || err)}`);
+      return {
+        filePath: initialPath,
+        mimeType: uploadedMimeType,
+      };
+    }
   }
 
   function ffmpegBin() {
@@ -279,15 +377,10 @@ function createTicketsRouter({
     try {
       const tickets = db.prepare(
         `
-          SELECT t.*, s.name as seller_name,
-                 COALESCE(COUNT(m.id), 0) AS unread_count
+          SELECT t.*, s.name as seller_name
           FROM tickets t
           LEFT JOIN sellers s ON t.seller_id = s.id
-          LEFT JOIN messages m
-            ON m.ticket_id = t.id
-           AND m.sender = 'client'
           WHERE t.phone = ?
-          GROUP BY t.id
           ORDER BY t.id DESC
           LIMIT ? OFFSET ?
         `
@@ -305,12 +398,8 @@ function createTicketsRouter({
 
     const tickets = db.prepare(`
       SELECT
-        t.*,
-        COALESCE(COUNT(m.id), 0) AS unread_count
+        t.*
       FROM tickets t
-      LEFT JOIN messages m
-        ON m.ticket_id = t.id
-       AND m.sender = 'client'
       WHERE (
         t.phone IS NOT NULL
         AND t.phone != ''
@@ -318,7 +407,6 @@ function createTicketsRouter({
         AND t.phone NOT GLOB '*[^0-9]*'
         AND length(t.phone) BETWEEN 8 AND 25
       )
-      GROUP BY t.id
       ORDER BY t.updated_at DESC
       LIMIT ? OFFSET ?
     `).all(limit, offset);
@@ -402,6 +490,42 @@ function createTicketsRouter({
       ORDER BY created_at ASC, id ASC
     `).all(id, timestamp, timestamp, lastId, timestamp);
     return res.json(messages);
+  });
+
+  // Marca mensagens do agente como "lidas" ao visualizar o ticket no app.
+  router.post('/tickets/:id/mark-read-by-agent', requireAuth, (req, res) => {
+    const { id } = req.params;
+
+    try {
+      const ticket = db.prepare('SELECT id, phone FROM tickets WHERE id = ?').get(id);
+      if (!ticket) {
+        return res.status(404).json({ error: 'Ticket não encontrado' });
+      }
+
+      const result = db.prepare(`
+        UPDATE messages
+        SET message_status = 'read',
+            message_status_updated_at = CURRENT_TIMESTAMP,
+            updated_at = CURRENT_TIMESTAMP
+        WHERE ticket_id = ?
+          AND sender = 'agent'
+          AND (message_status IS NULL OR message_status IN ('sent', 'delivered'))
+      `).run(id);
+
+      try {
+        events.emit('message', {
+          ticketId: Number(id),
+          phone: ticket.phone,
+          messageId: null,
+          deliveryStatus: 'read',
+          ts: Date.now(),
+        });
+      } catch (_) {}
+
+      return res.json({ success: true, updated: Number(result && result.changes ? result.changes : 0) });
+    } catch (_error) {
+      return res.status(500).json({ error: 'Erro ao marcar mensagens como lidas' });
+    }
   });
 
   // Criar lembrete para um ticket
@@ -697,7 +821,7 @@ function createTicketsRouter({
       // Salva mensagem no banco com reply_to_id se fornecido
       let inserted;
       if (reply_to_id) {
-        inserted = db.prepare('INSERT INTO messages (ticket_id, sender, content, sender_name, reply_to_id, whatsapp_key, whatsapp_message, whatsapp_message_id, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)').run(
+        inserted = db.prepare('INSERT INTO messages (ticket_id, sender, content, sender_name, reply_to_id, whatsapp_key, whatsapp_message, whatsapp_message_id, message_status, message_status_updated_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)').run(
           id,
           'agent',
           message,
@@ -705,17 +829,19 @@ function createTicketsRouter({
           reply_to_id,
           outboundMeta.serializedKey,
           outboundMeta.serializedMessage,
-          outboundMeta.messageId
+          outboundMeta.messageId,
+          'sent'
         );
       } else {
-        inserted = db.prepare('INSERT INTO messages (ticket_id, sender, content, sender_name, whatsapp_key, whatsapp_message, whatsapp_message_id, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)').run(
+        inserted = db.prepare('INSERT INTO messages (ticket_id, sender, content, sender_name, whatsapp_key, whatsapp_message, whatsapp_message_id, message_status, message_status_updated_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)').run(
           id,
           'agent',
           message,
           req.userName,
           outboundMeta.serializedKey,
           outboundMeta.serializedMessage,
-          outboundMeta.messageId
+          outboundMeta.messageId,
+          'sent'
         );
       }
 
@@ -869,7 +995,7 @@ function createTicketsRouter({
       const mediaUrl = `/media/audios/${path.basename(String(storedAudioPath))}`;
       let inserted;
       if (reply_to_id) {
-        inserted = db.prepare('INSERT INTO messages (ticket_id, sender, content, message_type, media_url, sender_name, reply_to_id, whatsapp_key, whatsapp_message, whatsapp_message_id, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)').run(
+        inserted = db.prepare('INSERT INTO messages (ticket_id, sender, content, message_type, media_url, sender_name, reply_to_id, whatsapp_key, whatsapp_message, whatsapp_message_id, message_status, message_status_updated_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)').run(
           id,
           'agent',
           '🎤 Áudio',
@@ -879,10 +1005,11 @@ function createTicketsRouter({
           reply_to_id,
           outboundMeta.serializedKey,
           outboundMeta.serializedMessage,
-          outboundMeta.messageId
+          outboundMeta.messageId,
+          'sent'
         );
       } else {
-        inserted = db.prepare('INSERT INTO messages (ticket_id, sender, content, message_type, media_url, sender_name, whatsapp_key, whatsapp_message, whatsapp_message_id, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)').run(
+        inserted = db.prepare('INSERT INTO messages (ticket_id, sender, content, message_type, media_url, sender_name, whatsapp_key, whatsapp_message, whatsapp_message_id, message_status, message_status_updated_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)').run(
           id,
           'agent',
           '🎤 Áudio',
@@ -891,7 +1018,8 @@ function createTicketsRouter({
           req.userName,
           outboundMeta.serializedKey,
           outboundMeta.serializedMessage,
-          outboundMeta.messageId
+          outboundMeta.messageId,
+          'sent'
         );
       }
 
@@ -935,6 +1063,149 @@ function createTicketsRouter({
     }
   });
 
+  // Endpoint para enviar imagem (galeria/câmera)
+  router.post('/tickets/:id/send-image', requireAuth, uploadImage.single('image'), async (req, res) => {
+    const { id } = req.params;
+    const reply_to_id = req.body && req.body.reply_to_id;
+    const caption = req.body && req.body.caption;
+
+    if (!req.file) {
+      return res.status(400).json({ error: 'Arquivo de imagem é obrigatório' });
+    }
+
+    try {
+      const ticket = db.prepare('SELECT * FROM tickets WHERE id = ?').get(id);
+
+      if (!ticket) {
+        fs.unlink(req.file.path, () => {});
+        return res.status(404).json({ error: 'Ticket não encontrado' });
+      }
+
+      if (ticket.status === 'resolvido' || ticket.status === 'encerrado') {
+        fs.unlink(req.file.path, () => {});
+        return res.status(400).json({ error: 'Não é possível enviar mensagens em tickets encerrados' });
+      }
+
+      const latestTicket = db.prepare(
+        "SELECT id FROM tickets WHERE phone = ? ORDER BY id DESC LIMIT 1"
+      ).get(ticket.phone);
+
+      if (latestTicket && String(latestTicket.id) !== String(ticket.id)) {
+        fs.unlink(req.file.path, () => {});
+        return res.status(400).json({ error: 'Não é possível enviar mensagens em tickets antigos. Use o ticket mais recente.' });
+      }
+
+      const sock = getSocket();
+      if (!sock) {
+        fs.unlink(req.file.path, () => {});
+        return res.status(503).json({ error: 'WhatsApp não conectado. Por favor, aguarde a reconexão.' });
+      }
+
+      const normalizedImage = await normalizeImageFileForWhatsApp(req.file);
+      const imagePath = normalizedImage.filePath || req.file.path;
+      const jid = resolveTicketJid(ticket);
+      const outgoingImageMime = normalizedImage.mimeType || normalizeUploadImageMime(req.file);
+      const rawCaption = String(caption || '').trim();
+      const outboundCaption = rawCaption ? `*${req.userName}:*\n\n${rawCaption}` : null;
+
+      const imageMessageObj = {
+        image: { url: imagePath },
+        mimetype: outgoingImageMime,
+        ...(outboundCaption ? { caption: outboundCaption } : {}),
+      };
+
+      const imageSendOptions = {};
+      if (reply_to_id) {
+        try {
+          const originalMsg = db.prepare('SELECT * FROM messages WHERE id = ?').get(reply_to_id);
+          if (originalMsg && originalMsg.whatsapp_key && originalMsg.whatsapp_message) {
+            imageSendOptions.quoted = {
+              key: JSON.parse(originalMsg.whatsapp_key),
+              message: JSON.parse(originalMsg.whatsapp_message),
+            };
+          }
+        } catch (e) {
+          console.error('Erro ao buscar mensagem para quote de imagem:', e.message);
+        }
+      }
+
+      const sentImageResult = await sock.sendMessage(jid, imageMessageObj, imageSendOptions);
+      const outboundMeta = extractOutboundMetadata(sentImageResult, jid, imageMessageObj);
+
+      const assignId = resolveAssignIdForUser(req);
+      if (assignId) {
+        if (req.userType === 'admin') {
+          if (ticket.seller_id !== assignId) {
+            db.prepare('UPDATE tickets SET seller_id = ? WHERE id = ?').run(assignId, id);
+          }
+        } else if (ticket.status === 'aguardando' || !ticket.seller_id) {
+          db.prepare('UPDATE tickets SET seller_id = ? WHERE id = ?').run(assignId, id);
+        }
+      }
+
+      const mediaUrl = `/media/images/${path.basename(String(imagePath))}`;
+      const storedContent = rawCaption || '🖼️ Imagem';
+      let inserted;
+      if (reply_to_id) {
+        inserted = db.prepare('INSERT INTO messages (ticket_id, sender, content, message_type, media_url, sender_name, reply_to_id, whatsapp_key, whatsapp_message, whatsapp_message_id, message_status, message_status_updated_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)').run(
+          id,
+          'agent',
+          storedContent,
+          'image',
+          mediaUrl,
+          req.userName,
+          reply_to_id,
+          outboundMeta.serializedKey,
+          outboundMeta.serializedMessage,
+          outboundMeta.messageId,
+          'sent'
+        );
+      } else {
+        inserted = db.prepare('INSERT INTO messages (ticket_id, sender, content, message_type, media_url, sender_name, whatsapp_key, whatsapp_message, whatsapp_message_id, message_status, message_status_updated_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)').run(
+          id,
+          'agent',
+          storedContent,
+          'image',
+          mediaUrl,
+          req.userName,
+          outboundMeta.serializedKey,
+          outboundMeta.serializedMessage,
+          outboundMeta.messageId,
+          'sent'
+        );
+      }
+
+      db.prepare('UPDATE tickets SET status = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?').run('em_atendimento', id);
+
+      const insertedMessageId = inserted && inserted.lastInsertRowid ? Number(inserted.lastInsertRowid) : null;
+      try {
+        events.emit('message', {
+          ticketId: Number(id),
+          phone: ticket.phone,
+          messageId: insertedMessageId,
+          ts: Date.now(),
+        });
+      } catch (_) {}
+      try {
+        events.emit('ticket', {
+          ticketId: Number(id),
+          phone: ticket.phone,
+          status: 'em_atendimento',
+          ts: Date.now(),
+        });
+      } catch (_) {}
+
+      return res.json({ success: true, message: 'Imagem enviada', imageUrl: mediaUrl });
+    } catch (error) {
+      if (req.file) {
+        fs.unlink(req.file.path, () => {});
+      }
+      console.error('Erro ao enviar imagem:', error && error.message ? error.message : error);
+      const normalized = normalizeSendFailure(error);
+      return res.status(normalized.status).json(normalized.body);
+    }
+  });
+
   router.patch(
     '/tickets/:id/status',
     requireAuth,
@@ -952,6 +1223,15 @@ function createTicketsRouter({
       const ticket = db.prepare('SELECT * FROM tickets WHERE id = ?').get(id);
       if (!ticket) {
         return res.status(404).json({ error: 'Ticket não encontrado' });
+      }
+
+      const latestTicket = db.prepare(
+        "SELECT id FROM tickets WHERE phone = ? ORDER BY id DESC LIMIT 1"
+      ).get(ticket.phone);
+      if (latestTicket && String(latestTicket.id) !== String(ticket.id)) {
+        return res.status(400).json({
+          error: 'Não é possível alterar status de tickets antigos. Use o ticket mais recente.',
+        });
       }
 
       const previousStatus = ticket.status;
@@ -1062,6 +1342,15 @@ function createTicketsRouter({
         return res.status(404).json({ error: 'Ticket não encontrado' });
       }
 
+      const latestTicket = db.prepare(
+        "SELECT id FROM tickets WHERE phone = ? ORDER BY id DESC LIMIT 1"
+      ).get(ticket.phone);
+      if (latestTicket && String(latestTicket.id) !== String(ticket.id)) {
+        return res.status(400).json({
+          error: 'Não é possível alterar atribuição em tickets antigos. Use o ticket mais recente.',
+        });
+      }
+
       // Vendedor só pode transferir se o ticket estiver com ele ou sem vendedor
       if (req.userType === 'seller') {
         if (ticket.seller_id && ticket.seller_id !== req.userId) {
@@ -1125,11 +1414,9 @@ function createTicketsRouter({
     try {
       const tickets = db.prepare(`
         SELECT t.*,
-               s.name as seller_name,
-               COALESCE(COUNT(m.id), 0) as unread_count
+               s.name as seller_name
         FROM tickets t
         LEFT JOIN sellers s ON t.seller_id = s.id
-        LEFT JOIN messages m ON m.ticket_id = t.id AND m.sender = 'client'
         WHERE (t.seller_id = ? OR t.seller_id IS NULL OR t.status = 'aguardando')
           ${includeClosed ? '' : "AND t.status != 'resolvido' AND t.status != 'encerrado'"}
           AND (
@@ -1139,7 +1426,6 @@ function createTicketsRouter({
             AND t.phone NOT GLOB '*[^0-9]*'
             AND length(t.phone) BETWEEN 8 AND 25
           )
-        GROUP BY t.id
         ORDER BY t.updated_at DESC
         LIMIT ? OFFSET ?
       `).all(sellerId === '0' ? null : sellerId, limit, offset);
@@ -1159,13 +1445,10 @@ function createTicketsRouter({
 
       const tickets = db.prepare(`
         SELECT t.*,
-               s.name as seller_name,
-               COALESCE(COUNT(m.id), 0) as unread_count
+               s.name as seller_name
         FROM tickets t
         LEFT JOIN sellers s ON t.seller_id = s.id
-        LEFT JOIN messages m ON m.ticket_id = t.id AND m.sender = 'client'
         ${includeAll ? '' : "WHERE (t.phone IS NOT NULL AND t.phone != '' AND t.phone NOT LIKE '%@%' AND t.phone NOT GLOB '*[^0-9]*' AND length(t.phone) BETWEEN 8 AND 25)"}
-        GROUP BY t.id
         ORDER BY t.updated_at DESC
         LIMIT ? OFFSET ?
       `).all(limit, offset);

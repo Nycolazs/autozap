@@ -337,6 +337,24 @@ function extractContactProfilePictureUrl(payload) {
   return null;
 }
 
+function saveContactProfilePicture(phone, url, source = 'whatsapp') {
+  const normalizedPhone = normalizePhone(phone);
+  const avatarUrl = String(url || '').trim();
+  if (!normalizedPhone) return;
+  if (!isAbsoluteHttpUrl(avatarUrl)) return;
+
+  try {
+    db.prepare(`
+      INSERT INTO contact_profiles (phone, avatar_url, avatar_source, created_at, updated_at)
+      VALUES (?, ?, ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
+      ON CONFLICT(phone) DO UPDATE SET
+        avatar_url = excluded.avatar_url,
+        avatar_source = excluded.avatar_source,
+        updated_at = CURRENT_TIMESTAMP
+    `).run(normalizedPhone, avatarUrl, String(source || 'whatsapp'));
+  } catch (_) {}
+}
+
 function isUnsupportedProfilePictureLookupError(err) {
   const graphErr = err && err.graphError ? err.graphError : null;
   const code = Number(graphErr && graphErr.code ? graphErr.code : 0);
@@ -741,6 +759,12 @@ async function processInboundMessage(msg, value) {
     (Array.isArray(value && value.contacts) && value.contacts[0] && value.contacts[0].profile && value.contacts[0].profile.name)
       ? String(value.contacts[0].profile.name)
       : null;
+  const contactAvatarUrl = extractContactProfilePictureUrl({
+    contacts: Array.isArray(value && value.contacts) ? value.contacts : [],
+  });
+  if (contactAvatarUrl) {
+    saveContactProfilePicture(phoneNumber, contactAvatarUrl, 'whatsapp');
+  }
 
   const now = new Date();
   const businessStatus = getBusinessStatus(now);
@@ -916,6 +940,32 @@ async function processInboundMessage(msg, value) {
     db.prepare('UPDATE tickets SET updated_at = CURRENT_TIMESTAMP WHERE id = ?').run(ticket.id);
   } catch (_) {}
 
+  // Fallback pragmático: se o cliente respondeu, considera mensagens anteriores do agente como lidas.
+  // Isso cobre cenários em que o webhook de status não chega no ambiente local.
+  try {
+    const statusUpdate = db.prepare(`
+      UPDATE messages
+      SET message_status = 'read',
+          message_status_updated_at = CURRENT_TIMESTAMP,
+          updated_at = CURRENT_TIMESTAMP
+      WHERE ticket_id = ?
+        AND sender = 'agent'
+        AND whatsapp_message_id IS NOT NULL
+        AND (message_status IS NULL OR message_status IN ('sent', 'delivered'))
+    `).run(ticket.id);
+
+    if (statusUpdate && Number(statusUpdate.changes || 0) > 0) {
+      try {
+        events.emit('message', {
+          ticketId: ticket.id,
+          messageId: null,
+          deliveryStatus: 'read',
+          ts: Date.now(),
+        });
+      } catch (_) {}
+    }
+  } catch (_) {}
+
   try {
     events.emit('message', {
       ticketId: ticket.id,
@@ -952,17 +1002,132 @@ function extractWebhookMessageGroups(payload) {
   return groups;
 }
 
-async function processWebhookPayload(payload) {
-  const groups = extractWebhookMessageGroups(payload);
-  if (!groups.length) return;
+function extractWebhookStatusGroups(payload) {
+  const groups = [];
 
-  for (const group of groups) {
+  const entries = Array.isArray(payload && payload.entry) ? payload.entry : [];
+  for (const entry of entries) {
+    const changes = Array.isArray(entry && entry.changes) ? entry.changes : [];
+    for (const change of changes) {
+      const value = change && change.value ? change.value : null;
+      if (value && Array.isArray(value.statuses) && value.statuses.length > 0) {
+        groups.push(value);
+      }
+    }
+  }
+
+  // Compatibilidade com payloads já "desembrulhados" por gateways/proxies.
+  if (payload && Array.isArray(payload.statuses) && payload.statuses.length > 0) {
+    groups.push(payload);
+  }
+
+  if (payload && payload.value && Array.isArray(payload.value.statuses) && payload.value.statuses.length > 0) {
+    groups.push(payload.value);
+  }
+
+  return groups;
+}
+
+function normalizeOutboundMessageStatus(rawStatus) {
+  const status = String(rawStatus || '').trim().toLowerCase();
+  if (status === 'sent') return 'sent';
+  if (status === 'delivered') return 'delivered';
+  if (status === 'read') return 'read';
+  if (status === 'failed') return 'failed';
+  return null;
+}
+
+const OUTBOUND_STATUS_PRIORITY = Object.freeze({
+  failed: 0,
+  sent: 1,
+  delivered: 2,
+  read: 3,
+});
+
+function shouldPromoteMessageStatus(currentStatus, nextStatus) {
+  const current = normalizeOutboundMessageStatus(currentStatus);
+  const next = normalizeOutboundMessageStatus(nextStatus);
+  if (!next) return false;
+  if (!current) return true;
+  if (next === current) return false;
+  if (next === 'failed') return true;
+  if (current === 'failed') return true;
+  return OUTBOUND_STATUS_PRIORITY[next] >= OUTBOUND_STATUS_PRIORITY[current];
+}
+
+function toSqliteTimestampFromWebhookSeconds(rawSeconds) {
+  const seconds = Number(rawSeconds);
+  if (!Number.isFinite(seconds) || seconds <= 0) return null;
+  const date = new Date(seconds * 1000);
+  if (!Number.isFinite(date.getTime())) return null;
+  return date.toISOString().slice(0, 19).replace('T', ' ');
+}
+
+function processStatusWebhook(statusItem) {
+  const messageId = String(statusItem && statusItem.id ? statusItem.id : '').trim();
+  if (!messageId) return;
+
+  const nextStatus = normalizeOutboundMessageStatus(statusItem && statusItem.status);
+  if (!nextStatus) return;
+
+  let row = null;
+  try {
+    row = db
+      .prepare('SELECT id, ticket_id, sender, message_status FROM messages WHERE whatsapp_message_id = ? ORDER BY id DESC LIMIT 1')
+      .get(messageId);
+  } catch (_) {
+    row = null;
+  }
+  if (!row || !row.id) return;
+
+  if (row.sender !== 'agent') return;
+  if (!shouldPromoteMessageStatus(row.message_status, nextStatus)) return;
+
+  const statusAt = toSqliteTimestampFromWebhookSeconds(statusItem && statusItem.timestamp);
+  try {
+    db.prepare(`
+      UPDATE messages
+      SET message_status = ?,
+          message_status_updated_at = COALESCE(?, CURRENT_TIMESTAMP),
+          updated_at = CURRENT_TIMESTAMP
+      WHERE id = ?
+    `).run(nextStatus, statusAt, row.id);
+  } catch (_) {
+    return;
+  }
+
+  try {
+    events.emit('message', {
+      ticketId: Number(row.ticket_id || 0),
+      messageId: Number(row.id),
+      deliveryStatus: nextStatus,
+      ts: Date.now(),
+    });
+  } catch (_) {}
+}
+
+async function processWebhookPayload(payload) {
+  const messageGroups = extractWebhookMessageGroups(payload);
+  const statusGroups = extractWebhookStatusGroups(payload);
+
+  for (const group of messageGroups) {
     const messages = Array.isArray(group && group.messages) ? group.messages : [];
     for (const msg of messages) {
       try {
         await processInboundMessage(msg, group);
       } catch (err) {
         logger.error('[WEBHOOK] Erro ao processar mensagem recebida:', err);
+      }
+    }
+  }
+
+  for (const group of statusGroups) {
+    const statuses = Array.isArray(group && group.statuses) ? group.statuses : [];
+    for (const status of statuses) {
+      try {
+        processStatusWebhook(status);
+      } catch (err) {
+        logger.error('[WEBHOOK] Erro ao processar status de mensagem:', err);
       }
     }
   }

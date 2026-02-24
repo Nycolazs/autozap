@@ -10,7 +10,7 @@ function parseNumber(value, fallback) {
 function isAssetRequest(req) {
   const p = String(req.path || '');
   if (!p) return false;
-  if (p === '/' || p === '/index.html') return true;
+  if (p === '/') return true;
   if (p.startsWith('/media/')) return true;
   if (p === '/healthz') return true;
   if (p === '/whatsapp/webhook') return true;
@@ -18,8 +18,6 @@ function isAssetRequest(req) {
   // Arquivos estáticos comuns (frontend). Evita contar assets no rate limit.
   const lower = p.toLowerCase();
   return (
-    lower.endsWith('.html') ||
-    lower.endsWith('.htm') ||
     lower.endsWith('.css') ||
     lower.endsWith('.js') ||
     lower.endsWith('.map') ||

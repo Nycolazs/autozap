@@ -1,11 +1,12 @@
-# AutoZap (Desktop + Firebase + WhatsApp Cloud API)
+# AutoZap (Desktop + Mobile Expo + Firebase + WhatsApp Cloud API)
 
-AutoZap agora roda como **aplicativo desktop** (macOS/Windows) com backend em Next.js/Express, integração oficial do WhatsApp (Cloud API) e persistência sincronizada com **Firebase Firestore**.
+AutoZap roda como **aplicativo desktop** (macOS/Windows) e **aplicativo mobile Expo (React Native)** com backend em Next.js/Express, integração oficial do WhatsApp (Cloud API) e persistência sincronizada com **Firebase Firestore**.
 
 ## Arquitetura
 
 - Interface: frontend legado preservado
-- Runtime: desktop (`Electron`) com bloqueio do frontend em navegador comum
+- Runtime desktop: `Electron` com bloqueio do frontend em navegador comum
+- Runtime mobile: `Expo` (React Native)
 - API WhatsApp: Cloud API oficial (Meta)
 - Persistência operacional local: SQLite
 - Persistência central: espelhamento automático SQLite -> Firebase Firestore (users, sellers, tickets, messages, reminders, blacklist, settings etc.)
@@ -68,26 +69,30 @@ AUTOZAP_TARGET_SERVER_URL=https://api.seudominio.com npm run desktop:dist:win:cl
 
 Esse build grava `electron/runtime-config.json` com o endpoint remoto.
 
-## Android (APK)
+## Mobile (Expo React Native)
 
-O projeto agora inclui base nativa Android com Capacitor.
+A parte mobile foi migrada para **React Native com Expo** no diretório `mobile-expo/`.
 
-Arquivos principais:
-
-- `capacitor.config.json`
-- pasta `android/`
-
-Scripts:
+Scripts no projeto raiz:
 
 ```bash
-npm run android:sync
-npm run android:open
-npm run android:build:debug
+npm run mobile:install
+npm run mobile:dev
+npm run mobile:start
+npm run mobile:android
+npm run mobile:ios
 ```
 
-APK debug gerado em:
+Fluxo recomendado para Android físico:
 
-- `android/app/build/outputs/apk/debug/app-debug.apk`
+```bash
+npm run mobile:adb:reverse
+npm run mobile:start
+```
+
+Depois, no Expo Go, escaneie o QR Code do Metro.
+
+Mais detalhes de build mobile estão em `mobile-expo/README.md`.
 
 ## Distribuição sem configuração do cliente
 
