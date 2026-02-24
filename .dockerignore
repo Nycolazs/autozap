@@ -1,0 +1,16 @@
+.git
+.github
+.next
+dist-electron
+node_modules
+functions/node_modules
+data
+media
+firebase-service-account.json
+firebase-service-account.example.json
+functions/.env
+.env
+.env.*
+*.log
+*.local
+README.md

@@ -1,4 +1,4 @@
 {
-  "serverUrl": "",
-  "managedExternally": false
+  "serverUrl": "https://autozap-api-648845115029.us-central1.run.app",
+  "managedExternally": true
 }

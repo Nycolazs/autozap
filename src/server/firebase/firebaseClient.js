@@ -6,6 +6,14 @@ const admin = require('firebase-admin');
 
 let cachedApp = null;
 
+function parseBoolean(value) {
+  const normalized = String(value == null ? '' : value).trim().toLowerCase();
+  if (!normalized) return null;
+  if (['1', 'true', 'yes', 'on'].includes(normalized)) return true;
+  if (['0', 'false', 'no', 'off'].includes(normalized)) return false;
+  return null;
+}
+
 function parseServiceAccountFromEnv() {
   const inlineJson = process.env.FIREBASE_SERVICE_ACCOUNT_JSON;
   if (inlineJson && String(inlineJson).trim()) {
@@ -46,24 +54,52 @@ function parseServiceAccountFromEnv() {
   return null;
 }
 
+function shouldTryApplicationDefaultCredentials() {
+  const force = parseBoolean(process.env.FIREBASE_USE_APPLICATION_DEFAULT_CREDENTIALS);
+  if (force != null) return force;
+
+  return Boolean(
+    String(process.env.K_SERVICE || '').trim() ||
+    String(process.env.GOOGLE_CLOUD_PROJECT || '').trim() ||
+    String(process.env.GCLOUD_PROJECT || '').trim() ||
+    String(process.env.FIREBASE_PROJECT_ID || '').trim()
+  );
+}
+
 function isFirebaseConfigured() {
-  return !!parseServiceAccountFromEnv();
+  return !!parseServiceAccountFromEnv() || shouldTryApplicationDefaultCredentials();
 }
 
 function getFirebaseApp() {
   if (cachedApp) return cachedApp;
 
   const serviceAccount = parseServiceAccountFromEnv();
-  if (!serviceAccount) {
+  const projectId = (serviceAccount && serviceAccount.project_id)
+    || process.env.FIREBASE_PROJECT_ID
+    || process.env.GOOGLE_CLOUD_PROJECT
+    || process.env.GCLOUD_PROJECT
+    || undefined;
+
+  try {
+    if (serviceAccount) {
+      cachedApp = admin.initializeApp({
+        credential: admin.credential.cert(serviceAccount),
+        ...(projectId ? { projectId } : {}),
+      });
+      return cachedApp;
+    }
+
+    if (!shouldTryApplicationDefaultCredentials()) {
+      return null;
+    }
+
+    cachedApp = admin.initializeApp({
+      credential: admin.credential.applicationDefault(),
+      ...(projectId ? { projectId } : {}),
+    });
+  } catch (_) {
     return null;
   }
-
-  const projectId = serviceAccount.project_id || process.env.FIREBASE_PROJECT_ID || undefined;
-
-  cachedApp = admin.initializeApp({
-    credential: admin.credential.cert(serviceAccount),
-    ...(projectId ? { projectId } : {}),
-  });
 
   return cachedApp;
 }
