@@ -336,7 +336,7 @@
 
   if ('serviceWorker' in navigator) {
     window.addEventListener('load', () => {
-      if (isElectronRuntime()) {
+      if (isElectronRuntime() || isCapacitorNativeRuntime()) {
         navigator.serviceWorker.getRegistrations()
           .then((regs) => Promise.all(regs.map((reg) => reg.unregister())))
           .catch(() => {});

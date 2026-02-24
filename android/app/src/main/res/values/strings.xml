@@ -1,0 +1,7 @@
+<?xml version='1.0' encoding='utf-8'?>
+<resources>
+    <string name="app_name">AutoZap</string>
+    <string name="title_activity_main">AutoZap</string>
+    <string name="package_name">com.autozap.mobile</string>
+    <string name="custom_url_scheme">com.autozap.mobile</string>
+</resources>

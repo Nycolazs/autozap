@@ -57,7 +57,10 @@
   const localBase = (isLocalHost || isPrivateIp) && window.location
     ? `${window.location.protocol}//${window.location.host}`
     : '';
-  const mobileFallbackBase = normalizeBase(window.__MOBILE_API_BASE__ || '');
+  const defaultMobileApiBase = normalizeBase(
+    window.__AUTOZAP_DEFAULT_MOBILE_API_BASE__ || 'https://autozap-api-7hf5lkloja-uc.a.run.app'
+  );
+  const mobileFallbackBase = normalizeBase(window.__MOBILE_API_BASE__ || defaultMobileApiBase);
 
   // Mantemos o endpoint salvo pelo usuário em storage sem limpeza automática.
   // Isso evita perda de configuração entre login e páginas internas (Electron/mobile).

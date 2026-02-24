@@ -30,9 +30,14 @@
     "desktop:dist:win": "npm run desktop:config:local && npm run build && electron-builder --win nsis zip",
     "desktop:dist:win:x64": "npm run desktop:config:local && npm run build && electron-builder --win nsis zip --x64 -c.win.signAndEditExecutable=false",
     "desktop:dist:mac:cloud": "npm run desktop:config:cloud && npm run build && electron-builder --mac dmg zip",
-    "desktop:dist:win:cloud": "npm run desktop:config:cloud && npm run build && electron-builder --win nsis zip"
+    "desktop:dist:win:cloud": "npm run desktop:config:cloud && npm run build && electron-builder --win nsis zip",
+    "android:sync": "npx @capacitor/cli sync android",
+    "android:open": "npx @capacitor/cli open android",
+    "android:build:debug": "cd android && ./gradlew assembleDebug"
   },
   "dependencies": {
+    "@capacitor/android": "^8.1.0",
+    "@capacitor/core": "^8.1.0",
     "axios": "^1.13.5",
     "bcrypt": "^6.0.0",
     "better-sqlite3": "^12.6.2",
@@ -53,6 +58,7 @@
     "zod": "^4.3.6"
   },
   "devDependencies": {
+    "@capacitor/cli": "^8.1.0",
     "concurrently": "^9.2.1",
     "cross-env": "^10.1.0",
     "electron": "^40.6.0",

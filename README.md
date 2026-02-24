@@ -68,6 +68,27 @@ AUTOZAP_TARGET_SERVER_URL=https://api.seudominio.com npm run desktop:dist:win:cl
 
 Esse build grava `electron/runtime-config.json` com o endpoint remoto.
 
+## Android (APK)
+
+O projeto agora inclui base nativa Android com Capacitor.
+
+Arquivos principais:
+
+- `capacitor.config.json`
+- pasta `android/`
+
+Scripts:
+
+```bash
+npm run android:sync
+npm run android:open
+npm run android:build:debug
+```
+
+APK debug gerado em:
+
+- `android/app/build/outputs/apk/debug/app-debug.apk`
+
 ## Distribuição sem configuração do cliente
 
 Fluxo recomendado:
