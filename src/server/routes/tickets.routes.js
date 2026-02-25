@@ -36,6 +36,12 @@ function parseScheduledAt(value) {
   return toSqliteUtc(date);
 }
 
+function normalizeQuickMessageShortcut(value) {
+  if (value == null) return null;
+  const raw = String(value).trim().toLowerCase();
+  return raw || null;
+}
+
 function createTicketsRouter({
   db,
   requireAuth,
@@ -360,7 +366,11 @@ function createTicketsRouter({
       const ticket = db.prepare(
         `SELECT t.*,
                 s.name as seller_name,
-                cp.avatar_url as avatar_url
+                CASE
+                  WHEN cp.avatar_url LIKE '/profile-picture/%/image%' THEN NULL
+                  WHEN cp.avatar_url LIKE '/__api/profile-picture/%/image%' THEN NULL
+                  ELSE cp.avatar_url
+                END as avatar_url
          FROM tickets t
          LEFT JOIN sellers s ON t.seller_id = s.id
          LEFT JOIN contact_profiles cp ON cp.phone = t.phone
@@ -388,7 +398,11 @@ function createTicketsRouter({
         `
           SELECT t.*,
                  s.name as seller_name,
-                 cp.avatar_url as avatar_url
+                 CASE
+                   WHEN cp.avatar_url LIKE '/profile-picture/%/image%' THEN NULL
+                   WHEN cp.avatar_url LIKE '/__api/profile-picture/%/image%' THEN NULL
+                   ELSE cp.avatar_url
+                 END as avatar_url
           FROM tickets t
           LEFT JOIN sellers s ON t.seller_id = s.id
           LEFT JOIN contact_profiles cp ON cp.phone = t.phone
@@ -411,7 +425,11 @@ function createTicketsRouter({
     const tickets = db.prepare(`
       SELECT
         t.*,
-        cp.avatar_url as avatar_url
+        CASE
+          WHEN cp.avatar_url LIKE '/profile-picture/%/image%' THEN NULL
+          WHEN cp.avatar_url LIKE '/__api/profile-picture/%/image%' THEN NULL
+          ELSE cp.avatar_url
+        END as avatar_url
       FROM tickets t
       LEFT JOIN contact_profiles cp ON cp.phone = t.phone
       WHERE (
@@ -435,7 +453,11 @@ function createTicketsRouter({
       const ticket = db.prepare(
         `SELECT t.*,
                 s.name as seller_name,
-                cp.avatar_url as avatar_url
+                CASE
+                  WHEN cp.avatar_url LIKE '/profile-picture/%/image%' THEN NULL
+                  WHEN cp.avatar_url LIKE '/__api/profile-picture/%/image%' THEN NULL
+                  ELSE cp.avatar_url
+                END as avatar_url
          FROM tickets t
          LEFT JOIN sellers s ON t.seller_id = s.id
          LEFT JOIN contact_profiles cp ON cp.phone = t.phone
@@ -656,7 +678,7 @@ function createTicketsRouter({
 
     try {
       const reminders = db.prepare(
-        `SELECT r.*, t.phone, t.contact_name
+        `SELECT r.*, t.phone, t.contact_name, t.status AS ticket_status
          FROM ticket_reminders r
          JOIN tickets t ON t.id = r.ticket_id
          WHERE r.seller_id = ?
@@ -678,7 +700,7 @@ function createTicketsRouter({
 
     try {
       const due = db.prepare(
-        `SELECT r.*, t.phone, t.contact_name
+        `SELECT r.*, t.phone, t.contact_name, t.status AS ticket_status
          FROM ticket_reminders r
          JOIN tickets t ON t.id = r.ticket_id
          WHERE r.seller_id = ?
@@ -709,7 +731,7 @@ function createTicketsRouter({
 
     try {
       const pending = db.prepare(
-        `SELECT r.*, t.phone, t.contact_name
+        `SELECT r.*, t.phone, t.contact_name, t.status AS ticket_status
          FROM ticket_reminders r
          JOIN tickets t ON t.id = r.ticket_id
          WHERE r.seller_id = ?
@@ -723,6 +745,161 @@ function createTicketsRouter({
       return res.status(500).json({ error: 'Erro ao buscar lembretes pendentes' });
     }
   });
+
+  // Mensagens rápidas (por usuário autenticado)
+  router.get('/quick-messages', requireAuth, (req, res) => {
+    try {
+      const rows = db.prepare(
+        `SELECT id, user_id, user_type, shortcut, title, content, created_at, updated_at
+         FROM quick_messages
+         WHERE user_id = ?
+           AND user_type = ?
+         ORDER BY updated_at DESC, id DESC`
+      ).all(req.userId, req.userType);
+      return res.json(rows);
+    } catch (_error) {
+      return res.status(500).json({ error: 'Erro ao listar mensagens rápidas' });
+    }
+  });
+
+  router.post(
+    '/quick-messages',
+    requireAuth,
+    validate(schemas.quickMessageCreate),
+    auditMiddleware('quick-message-create'),
+    (req, res) => {
+      const title = String(req.body.title || '').trim();
+      const content = String(req.body.content || '').trim();
+      const shortcut = normalizeQuickMessageShortcut(req.body.shortcut);
+
+      if (!title || !content) {
+        return res.status(400).json({ error: 'Título e mensagem são obrigatórios' });
+      }
+
+      try {
+        if (shortcut) {
+          const existingShortcut = db.prepare(
+            `SELECT id FROM quick_messages
+             WHERE user_id = ? AND user_type = ? AND shortcut = ?
+             LIMIT 1`
+          ).get(req.userId, req.userType, shortcut);
+          if (existingShortcut) {
+            return res.status(409).json({ error: 'Já existe uma mensagem rápida com esse atalho' });
+          }
+        }
+
+        const info = db.prepare(
+          `INSERT INTO quick_messages (user_id, user_type, shortcut, title, content, updated_at)
+           VALUES (?, ?, ?, ?, ?, CURRENT_TIMESTAMP)`
+        ).run(req.userId, req.userType, shortcut, title, content);
+
+        const created = db.prepare(
+          'SELECT id, user_id, user_type, shortcut, title, content, created_at, updated_at FROM quick_messages WHERE id = ?'
+        ).get(info.lastInsertRowid);
+        return res.status(201).json(created);
+      } catch (_error) {
+        return res.status(500).json({ error: 'Erro ao criar mensagem rápida' });
+      }
+    }
+  );
+
+  router.patch(
+    '/quick-messages/:id',
+    requireAuth,
+    validate(schemas.quickMessageUpdate),
+    auditMiddleware('quick-message-update'),
+    (req, res) => {
+      const id = Number(req.params.id);
+      if (!Number.isFinite(id) || id <= 0) {
+        return res.status(400).json({ error: 'ID inválido' });
+      }
+
+      try {
+        const current = db.prepare(
+          `SELECT id, user_id, user_type, shortcut, title, content, created_at, updated_at
+           FROM quick_messages
+           WHERE id = ?
+             AND user_id = ?
+             AND user_type = ?`
+        ).get(id, req.userId, req.userType);
+
+        if (!current) {
+          return res.status(404).json({ error: 'Mensagem rápida não encontrada' });
+        }
+
+        const nextTitle = Object.prototype.hasOwnProperty.call(req.body, 'title')
+          ? String(req.body.title || '').trim()
+          : String(current.title || '').trim();
+        const nextContent = Object.prototype.hasOwnProperty.call(req.body, 'content')
+          ? String(req.body.content || '').trim()
+          : String(current.content || '').trim();
+        const nextShortcut = Object.prototype.hasOwnProperty.call(req.body, 'shortcut')
+          ? normalizeQuickMessageShortcut(req.body.shortcut)
+          : normalizeQuickMessageShortcut(current.shortcut);
+
+        if (!nextTitle || !nextContent) {
+          return res.status(400).json({ error: 'Título e mensagem são obrigatórios' });
+        }
+
+        if (nextShortcut) {
+          const existingShortcut = db.prepare(
+            `SELECT id FROM quick_messages
+             WHERE user_id = ?
+               AND user_type = ?
+               AND shortcut = ?
+               AND id != ?
+             LIMIT 1`
+          ).get(req.userId, req.userType, nextShortcut, id);
+
+          if (existingShortcut) {
+            return res.status(409).json({ error: 'Já existe uma mensagem rápida com esse atalho' });
+          }
+        }
+
+        db.prepare(
+          `UPDATE quick_messages
+           SET shortcut = ?, title = ?, content = ?, updated_at = CURRENT_TIMESTAMP
+           WHERE id = ?`
+        ).run(nextShortcut, nextTitle, nextContent, id);
+
+        const updated = db.prepare(
+          'SELECT id, user_id, user_type, shortcut, title, content, created_at, updated_at FROM quick_messages WHERE id = ?'
+        ).get(id);
+        return res.json(updated);
+      } catch (_error) {
+        return res.status(500).json({ error: 'Erro ao atualizar mensagem rápida' });
+      }
+    }
+  );
+
+  router.delete(
+    '/quick-messages/:id',
+    requireAuth,
+    auditMiddleware('quick-message-delete'),
+    (req, res) => {
+      const id = Number(req.params.id);
+      if (!Number.isFinite(id) || id <= 0) {
+        return res.status(400).json({ error: 'ID inválido' });
+      }
+
+      try {
+        const result = db.prepare(
+          `DELETE FROM quick_messages
+           WHERE id = ?
+             AND user_id = ?
+             AND user_type = ?`
+        ).run(id, req.userId, req.userType);
+
+        if (!result || !result.changes) {
+          return res.status(404).json({ error: 'Mensagem rápida não encontrada' });
+        }
+
+        return res.json({ success: true });
+      } catch (_error) {
+        return res.status(500).json({ error: 'Erro ao remover mensagem rápida' });
+      }
+    }
+  );
 
   router.post(
     '/tickets/:id/send',
@@ -1432,7 +1609,11 @@ function createTicketsRouter({
       const tickets = db.prepare(`
         SELECT t.*,
                s.name as seller_name,
-               cp.avatar_url as avatar_url
+               CASE
+                 WHEN cp.avatar_url LIKE '/profile-picture/%/image%' THEN NULL
+                 WHEN cp.avatar_url LIKE '/__api/profile-picture/%/image%' THEN NULL
+                 ELSE cp.avatar_url
+               END as avatar_url
         FROM tickets t
         LEFT JOIN sellers s ON t.seller_id = s.id
         LEFT JOIN contact_profiles cp ON cp.phone = t.phone
@@ -1465,7 +1646,11 @@ function createTicketsRouter({
       const tickets = db.prepare(`
         SELECT t.*,
                s.name as seller_name,
-               cp.avatar_url as avatar_url
+               CASE
+                 WHEN cp.avatar_url LIKE '/profile-picture/%/image%' THEN NULL
+                 WHEN cp.avatar_url LIKE '/__api/profile-picture/%/image%' THEN NULL
+                 ELSE cp.avatar_url
+               END as avatar_url
         FROM tickets t
         LEFT JOIN sellers s ON t.seller_id = s.id
         LEFT JOIN contact_profiles cp ON cp.phone = t.phone

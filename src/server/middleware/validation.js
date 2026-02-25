@@ -2,6 +2,49 @@
 
 const { z } = require('zod');
 
+function normalizeClockTime(value) {
+  if (value == null) return null;
+  const raw = String(value).trim();
+  if (!raw) return null;
+
+  const match24 = raw.match(/^([01]?\d|2[0-3]):([0-5]\d)(?::[0-5]\d)?$/);
+  if (match24) {
+    const hour = String(match24[1] || '').padStart(2, '0');
+    const minute = String(match24[2] || '').padStart(2, '0');
+    return `${hour}:${minute}`;
+  }
+
+  const match12 = raw.match(/^(\d{1,2}):([0-5]\d)(?::[0-5]\d)?\s*([AaPp][Mm])$/);
+  if (match12) {
+    const sourceHour = Number(match12[1]);
+    const minute = String(match12[2] || '').padStart(2, '0');
+    const period = String(match12[3] || '').toUpperCase();
+    if (!Number.isFinite(sourceHour) || sourceHour < 1 || sourceHour > 12) return raw;
+    let hour = sourceHour % 12;
+    if (period === 'PM') hour += 12;
+    return `${String(hour).padStart(2, '0')}:${minute}`;
+  }
+
+  return raw;
+}
+
+const nullableClockTimeSchema = z.preprocess(
+  normalizeClockTime,
+  z.union([z.null(), z.string().regex(/^([01]\d|2[0-3]):([0-5]\d)$/)])
+);
+
+const quickMessageShortcutSchema = z.preprocess(
+  (value) => {
+    if (value == null) return null;
+    const normalized = String(value).trim();
+    return normalized || null;
+  },
+  z.union([
+    z.null(),
+    z.string().regex(/^[a-zA-Z0-9_-]{1,24}$/, 'Atalho invalido. Use apenas letras, numeros, _ ou -'),
+  ])
+);
+
 // Schema para login
 const loginSchema = z.object({
   username: z.string().min(1, 'Usuário é obrigatório').max(100),
@@ -51,6 +94,23 @@ const reminderUpdateSchema = z.object({
   status: z.enum(['scheduled', 'canceled', 'done', 'resolvido']).optional(),
 });
 
+const quickMessageCreateSchema = z.object({
+  title: z.string().trim().min(1, 'Titulo e obrigatorio').max(120, 'Titulo muito longo'),
+  content: z.string().trim().min(1, 'Mensagem e obrigatoria').max(5000, 'Mensagem muito longa'),
+  shortcut: quickMessageShortcutSchema.optional(),
+});
+
+const quickMessageUpdateSchema = z.object({
+  title: z.string().trim().min(1, 'Titulo e obrigatorio').max(120, 'Titulo muito longo').optional(),
+  content: z.string().trim().min(1, 'Mensagem e obrigatoria').max(5000, 'Mensagem muito longa').optional(),
+  shortcut: quickMessageShortcutSchema.optional(),
+}).refine(
+  (payload) => Object.prototype.hasOwnProperty.call(payload, 'title')
+    || Object.prototype.hasOwnProperty.call(payload, 'content')
+    || Object.prototype.hasOwnProperty.call(payload, 'shortcut'),
+  'Informe ao menos um campo para atualizar'
+);
+
 // Schema para blacklist
 const blacklistSchema = z.object({
   phone: z.string().regex(/^[0-9]{10,15}(@s\.whatsapp\.net)?$/, 'Telefone inválido'),
@@ -61,8 +121,8 @@ const blacklistSchema = z.object({
 const businessHoursSchema = z.array(
   z.object({
     day: z.number().int().min(0).max(6),
-    open_time: z.string().regex(/^([01]\d|2[0-3]):([0-5]\d)$/).nullable(),
-    close_time: z.string().regex(/^([01]\d|2[0-3]):([0-5]\d)$/).nullable(),
+    open_time: nullableClockTimeSchema,
+    close_time: nullableClockTimeSchema,
     enabled: z.union([z.boolean(), z.number().int().min(0).max(1)]).transform((value) => Boolean(value)),
   })
 );
@@ -71,8 +131,8 @@ const businessHoursSchema = z.array(
 const businessExceptionSchema = z.object({
   date: z.string().regex(/^\d{4}-\d{2}-\d{2}$/),
   closed: z.union([z.boolean(), z.number().int().min(0).max(1)]).transform((value) => Boolean(value)),
-  open_time: z.string().regex(/^([01]\d|2[0-3]):([0-5]\d)$/).nullable().optional(),
-  close_time: z.string().regex(/^([01]\d|2[0-3]):([0-5]\d)$/).nullable().optional(),
+  open_time: nullableClockTimeSchema.optional(),
+  close_time: nullableClockTimeSchema.optional(),
   reason: z.string().max(500).nullable().optional(),
 });
 
@@ -113,6 +173,8 @@ module.exports = {
     assignTicket: assignTicketSchema,
     reminderCreate: reminderCreateSchema,
     reminderUpdate: reminderUpdateSchema,
+    quickMessageCreate: quickMessageCreateSchema,
+    quickMessageUpdate: quickMessageUpdateSchema,
     blacklist: blacklistSchema,
     businessHours: businessHoursSchema,
     businessException: businessExceptionSchema,

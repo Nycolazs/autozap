@@ -241,6 +241,19 @@ function initSchema(db) {
     );
   `).run();
 
+  db.prepare(`
+    CREATE TABLE IF NOT EXISTS quick_messages (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      user_id INTEGER NOT NULL,
+      user_type TEXT NOT NULL,
+      shortcut TEXT,
+      title TEXT NOT NULL,
+      content TEXT NOT NULL,
+      created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+      updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
+    );
+  `).run();
+
   // Migração: adiciona colunas de lembretes se não existirem
   try { db.prepare('ALTER TABLE ticket_reminders ADD COLUMN notified_at DATETIME').run(); } catch (err) { if (!String(err.message || '').includes('duplicate column')) {} }
   try { db.prepare('ALTER TABLE ticket_reminders ADD COLUMN created_by_user_id INTEGER').run(); } catch (err) { if (!String(err.message || '').includes('duplicate column')) {} }
@@ -298,6 +311,12 @@ function initSchema(db) {
       CREATE INDEX IF NOT EXISTS idx_reminders_seller_id ON ticket_reminders(seller_id);
       CREATE INDEX IF NOT EXISTS idx_reminders_scheduled_at ON ticket_reminders(scheduled_at);
       CREATE INDEX IF NOT EXISTS idx_reminders_status ON ticket_reminders(status);
+
+      CREATE INDEX IF NOT EXISTS idx_quick_messages_owner_updated_at ON quick_messages(user_type, user_id, updated_at);
+      CREATE UNIQUE INDEX IF NOT EXISTS uniq_quick_messages_owner_shortcut
+        ON quick_messages(user_type, user_id, shortcut)
+        WHERE shortcut IS NOT NULL
+          AND TRIM(shortcut) != '';
       
       CREATE INDEX IF NOT EXISTS idx_blacklist_phone ON blacklist(phone);
     `);
@@ -415,6 +434,7 @@ function attachHelpers(db) {
     try {
       db.exec(`
         BEGIN TRANSACTION;
+        DELETE FROM quick_messages;
         DELETE FROM ticket_reminders;
         DELETE FROM sellers;
         DELETE FROM users;
@@ -431,6 +451,7 @@ function attachHelpers(db) {
     try {
       db.exec(`
         BEGIN TRANSACTION;
+        DELETE FROM quick_messages;
         DELETE FROM ticket_reminders;
         DELETE FROM messages;
         DELETE FROM tickets;

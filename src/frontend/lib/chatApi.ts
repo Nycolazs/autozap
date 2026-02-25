@@ -4,6 +4,8 @@ import type {
   AuthSession,
   ChatMessage,
   ConnectionStatus,
+  DueTicketReminder,
+  QuickMessage,
   ProfilePictureResponse,
   TicketReminder,
   Ticket,
@@ -59,12 +61,14 @@ function normalizeProfilePictureResponse(payload: unknown): ProfilePictureRespon
   const fromCacheRaw = source.fromCache ?? source.from_cache ?? nestedData.fromCache ?? nestedData.from_cache;
   const pendingRaw = source.pending ?? nestedData.pending;
   const sourceRaw = source.source ?? source.avatar_source ?? nestedData.source ?? nestedData.avatar_source;
+  const reasonRaw = source.reason ?? source.error_reason ?? nestedData.reason ?? nestedData.error_reason;
 
   return {
     url,
     fromCache: fromCacheRaw == null ? undefined : !!fromCacheRaw,
     pending: pendingRaw == null ? undefined : !!pendingRaw,
     source: sourceRaw == null ? undefined : String(sourceRaw || '').trim() || null,
+    reason: reasonRaw == null ? undefined : String(reasonRaw || '').trim() || null,
   };
 }
 
@@ -99,6 +103,14 @@ export async function listTickets(options: TicketListOptions): Promise<Ticket[]>
 export function getTicketMessages(ticketId: number, limit = 250): Promise<ChatMessage[]> {
   return requestJson<ChatMessage[]>(
     `/tickets/${encodeURIComponent(ticketId)}/messages?limit=${encodeURIComponent(limit)}`,
+    { method: 'GET' }
+  );
+}
+
+export function listContactTickets(phone: string, limit = 100): Promise<Ticket[]> {
+  const normalized = String(phone || '').split('@')[0].replace(/\D/g, '');
+  return requestJson<Ticket[]>(
+    `/contacts/${encodeURIComponent(normalized)}/tickets?limit=${encodeURIComponent(limit)}`,
     { method: 'GET' }
   );
 }
@@ -222,6 +234,58 @@ export function updateReminder(
       method: 'PATCH',
       body: payload,
     }
+  );
+}
+
+export function listDueReminders(): Promise<DueTicketReminder[]> {
+  return requestJson<DueTicketReminder[]>(
+    '/reminders/due',
+    { method: 'GET' }
+  );
+}
+
+export function listQuickMessages(): Promise<QuickMessage[]> {
+  return requestJson<QuickMessage[]>(
+    '/quick-messages',
+    { method: 'GET' }
+  );
+}
+
+export function createQuickMessage(payload: {
+  title: string;
+  content: string;
+  shortcut?: string | null;
+}): Promise<QuickMessage> {
+  return requestJson<QuickMessage>(
+    '/quick-messages',
+    {
+      method: 'POST',
+      body: payload,
+    }
+  );
+}
+
+export function updateQuickMessage(
+  quickMessageId: number,
+  payload: {
+    title?: string;
+    content?: string;
+    shortcut?: string | null;
+  }
+): Promise<QuickMessage> {
+  return requestJson<QuickMessage>(
+    `/quick-messages/${encodeURIComponent(quickMessageId)}`,
+    {
+      method: 'PATCH',
+      body: payload,
+    }
+  );
+}
+
+export function deleteQuickMessage(quickMessageId: number): Promise<{ success: true }> {
+  return requestJson<{ success: true }>(
+    `/quick-messages/${encodeURIComponent(quickMessageId)}`,
+    { method: 'DELETE' }
   );
 }
 

@@ -69,6 +69,7 @@ export interface ProfilePictureResponse {
   fromCache?: boolean;
   pending?: boolean;
   source?: string | null;
+  reason?: string | null;
 }
 
 export interface TicketReminder {
@@ -82,6 +83,23 @@ export interface TicketReminder {
   notified_at?: string | null;
   created_by_user_id?: number | null;
   created_by_type?: string | null;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface DueTicketReminder extends TicketReminder {
+  phone: string;
+  contact_name?: string | null;
+  ticket_status?: TicketStatus | null;
+}
+
+export interface QuickMessage {
+  id: number;
+  user_id: number;
+  user_type: UserType;
+  shortcut: string | null;
+  title: string;
+  content: string;
   created_at: string;
   updated_at: string;
 }

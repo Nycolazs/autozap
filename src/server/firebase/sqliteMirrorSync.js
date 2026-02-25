@@ -18,6 +18,7 @@ const TABLE_CONFIGS = [
   { table: 'contact_profiles', pk: 'phone', pkType: 'string' },
   { table: 'messages', pk: 'id', pkType: 'number' },
   { table: 'ticket_reminders', pk: 'id', pkType: 'number' },
+  { table: 'quick_messages', pk: 'id', pkType: 'number' },
   { table: 'blacklist', pk: 'id', pkType: 'number' },
   { table: 'out_of_hours_log', pk: 'phone', pkType: 'string' },
 ];
