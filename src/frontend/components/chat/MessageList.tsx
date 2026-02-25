@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { formatTime, resolveMediaUrl } from '@/src/frontend/lib/runtime';
+import { formatTime, resolveMediaObjectUrl, resolveMediaUrl } from '@/src/frontend/lib/runtime';
 import { AudioMessagePlayer } from '@/src/frontend/components/chat/AudioMessagePlayer';
 import type { ChatMessage } from '@/src/frontend/types/chat';
 import styles from '@/src/frontend/components/chat/chat.module.css';
@@ -15,25 +15,107 @@ type ImagePreview = {
   caption: string;
 };
 
+type DeliveryStatus = 'sent' | 'delivered' | 'read' | 'failed' | null;
+
 const AUTO_SCROLL_BOTTOM_THRESHOLD_PX = 96;
 
-function normalizeMessageType(message: ChatMessage): string {
-  if (message.message_type) return message.message_type;
+function normalizeStoredMessageType(value: string | null | undefined): string | null {
+  const normalized = String(value || '').trim().toLowerCase();
+  if (!normalized) return null;
+  if (normalized === 'image') return 'image';
+  if (normalized === 'audio') return 'audio';
+  if (normalized === 'video') return 'video';
+  if (normalized === 'sticker') return 'sticker';
+  if (normalized === 'document') return 'document';
+  if (normalized === 'system') return 'system';
+  if (normalized === 'text') return 'text';
+  return null;
+}
 
-  const content = String(message.content || '').trim().toLowerCase();
-  const mediaUrl = String(message.media_url || '').toLowerCase();
+function inferMediaTypeFromContent(rawValue: string): string | null {
+  const normalized = String(rawValue || '').trim().toLowerCase();
+  if (!normalized) return null;
 
-  if (content === '[figurinha]' || mediaUrl.endsWith('.webp') || mediaUrl.includes('.webp?')) {
+  if (
+    normalized === '[imagem]'
+    || normalized === '[image]'
+    || normalized === '🖼️ imagem'
+  ) {
+    return 'image';
+  }
+
+  if (
+    normalized === '[figurinha]'
+    || normalized === '[sticker]'
+    || normalized === '🧩 figurinha'
+  ) {
     return 'sticker';
   }
 
-  if (message.media_url) {
-    if (message.media_url.includes('/audios/')) return 'audio';
-    if (message.media_url.includes('/images/')) return 'image';
-    if (message.media_url.includes('/stickers/')) return 'sticker';
-    if (message.media_url.includes('/videos/')) return 'video';
-    if (message.media_url.includes('/documents/')) return 'document';
+  if (
+    normalized === '[áudio]'
+    || normalized === '[audio]'
+    || normalized === '🎵 áudio'
+    || normalized === '🎤 áudio'
+  ) {
+    return 'audio';
   }
+
+  if (
+    normalized === '[vídeo]'
+    || normalized === '[video]'
+    || normalized === '🎬 vídeo'
+  ) {
+    return 'video';
+  }
+
+  if (
+    normalized === '[documento]'
+    || normalized.startsWith('[documento:')
+    || normalized === '📄 documento'
+  ) {
+    return 'document';
+  }
+
+  return null;
+}
+
+function inferMediaTypeFromUrl(rawUrl: string): string | null {
+  const value = String(rawUrl || '').trim();
+  if (!value) return null;
+
+  const lower = value.toLowerCase();
+  if (lower.includes('/audios/')) return 'audio';
+  if (lower.includes('/images/')) return 'image';
+  if (lower.includes('/stickers/')) return 'sticker';
+  if (lower.includes('/videos/')) return 'video';
+  if (lower.includes('/documents/')) return 'document';
+  if (/\.webp(?:\?|$)/i.test(lower)) return 'sticker';
+
+  try {
+    const parsed = new URL(value, 'http://localhost');
+    const type = String(parsed.searchParams.get('type') || '').trim().toLowerCase();
+    if (type === 'image') return 'image';
+    if (type === 'audio') return 'audio';
+    if (type === 'video') return 'video';
+    if (type === 'sticker') return 'sticker';
+    if (type === 'document') return 'document';
+  } catch (_) {}
+
+  return null;
+}
+
+function normalizeMessageType(message: ChatMessage): string {
+  const storedType = normalizeStoredMessageType(message.message_type);
+  if (storedType) return storedType;
+
+  const content = String(message.content || '').trim().toLowerCase();
+  const typeFromUrl = inferMediaTypeFromUrl(message.media_url || '');
+  if (typeFromUrl) return typeFromUrl;
+
+  const typeFromContent = inferMediaTypeFromContent(content);
+  if (typeFromContent) return typeFromContent;
+
   return 'text';
 }
 
@@ -43,12 +125,15 @@ function isMediaPlaceholderText(rawValue: string): boolean {
 
   return new Set([
     '[imagem]',
+    '[image]',
     '[figurinha]',
+    '[sticker]',
     '[áudio]',
     '[audio]',
     '[vídeo]',
     '[video]',
     '[documento]',
+    '[document]',
     '🖼️ imagem',
     '🧩 figurinha',
     '🎵 áudio',
@@ -82,23 +167,73 @@ function isInteractiveTarget(target: EventTarget | null): boolean {
   return !!target.closest('button, a, input, textarea, select, audio, video');
 }
 
+type ResolvedMediaImageProps = {
+  mediaPath: string;
+  className: string;
+  alt: string;
+  caption: string;
+  onOpenImage: (src: string, caption: string) => void;
+};
+
+function ResolvedMediaImage({ mediaPath, className, alt, caption, onOpenImage }: ResolvedMediaImageProps) {
+  const [src, setSrc] = useState(() => resolveMediaUrl(mediaPath));
+
+  useEffect(() => {
+    let cancelled = false;
+    let objectUrl: string | null = null;
+
+    const direct = resolveMediaUrl(mediaPath);
+    setSrc(direct);
+
+    (async () => {
+      const resolved = await resolveMediaObjectUrl(mediaPath, { forceAuthFetch: true });
+      if (cancelled) {
+        if (/^blob:/i.test(resolved)) {
+          try { URL.revokeObjectURL(resolved); } catch (_) {}
+        }
+        return;
+      }
+      setSrc(resolved || direct);
+      if (/^blob:/i.test(resolved)) {
+        objectUrl = resolved;
+      }
+    })();
+
+    return () => {
+      cancelled = true;
+      if (objectUrl) {
+        try { URL.revokeObjectURL(objectUrl); } catch (_) {}
+      }
+    };
+  }, [mediaPath]);
+
+  return (
+    <img
+      className={className}
+      src={src}
+      alt={alt}
+      loading="lazy"
+      onClick={() => onOpenImage(src, caption)}
+    />
+  );
+}
+
 function renderMessageContent(
   message: ChatMessage,
   messageType: string,
   onOpenImage: (src: string, caption: string) => void
 ) {
   if ((messageType === 'image' || messageType === 'sticker') && message.media_url) {
-    const src = resolveMediaUrl(message.media_url);
     const explicitCaption = hasExplicitCaption(message) ? String(message.content || '').trim() : '';
 
     return (
       <>
-        <img
+        <ResolvedMediaImage
+          mediaPath={message.media_url}
           className={messageType === 'sticker' ? styles.messageSticker : styles.messageImage}
-          src={src}
           alt={messageType === 'sticker' ? 'Figurinha' : 'Imagem enviada'}
-          loading="lazy"
-          onClick={() => onOpenImage(src, explicitCaption)}
+          caption={explicitCaption}
+          onOpenImage={onOpenImage}
         />
         {explicitCaption ? (
           <div className={styles.messageText}>{explicitCaption}</div>
@@ -146,6 +281,100 @@ function rowClass(sender: ChatMessage['sender']): string {
   if (sender === 'agent') return styles.messageAgent;
   if (sender === 'client') return styles.messageClient;
   return styles.messageSystem;
+}
+
+function normalizeDeliveryStatusValue(rawValue: unknown): DeliveryStatus {
+  if (rawValue == null) return null;
+
+  if (typeof rawValue === 'number' && Number.isFinite(rawValue)) {
+    if (rawValue < 0) return 'failed';
+    if (rawValue <= 1) return 'sent';
+    if (rawValue === 2) return 'delivered';
+    return 'read';
+  }
+
+  const normalized = String(rawValue || '').trim().toLowerCase();
+  if (!normalized) return null;
+
+  if (normalized === 'failed' || normalized === 'error') return 'failed';
+  if (normalized === 'read' || normalized === 'played') return 'read';
+  if (normalized === 'delivered' || normalized === 'delivery') return 'delivered';
+  if (normalized === 'sent' || normalized === 'server_ack' || normalized === 'pending') return 'sent';
+
+  if (/^-?\d+$/.test(normalized)) {
+    return normalizeDeliveryStatusValue(Number(normalized));
+  }
+
+  const ackMatch = normalized.match(/ack[^0-9-]*(-?\d+)/i);
+  if (ackMatch && ackMatch[1]) {
+    return normalizeDeliveryStatusValue(Number(ackMatch[1]));
+  }
+
+  if (normalized.includes('fail') || normalized.includes('erro')) return 'failed';
+  if (normalized.includes('read') || normalized.includes('play')) return 'read';
+  if (normalized.includes('deliver') || normalized.includes('receiv')) return 'delivered';
+  if (normalized.includes('sent') || normalized.includes('server')) return 'sent';
+
+  return null;
+}
+
+function normalizeDeliveryStatus(message: ChatMessage): DeliveryStatus {
+  if (message.sender !== 'agent') return null;
+  const source = message as unknown as Record<string, unknown>;
+
+  const candidateValues = [
+    source.message_status,
+    source.messageStatus,
+    source.delivery_status,
+    source.deliveryStatus,
+    source.status,
+    source.whatsapp_status,
+    source.ack,
+  ];
+
+  for (const value of candidateValues) {
+    const normalized = normalizeDeliveryStatusValue(value);
+    if (normalized) return normalized;
+  }
+
+  const rawPayload = source.whatsapp_message;
+  if (typeof rawPayload === 'string' && rawPayload.trim().startsWith('{')) {
+    try {
+      const parsed = JSON.parse(rawPayload) as Record<string, unknown>;
+      const normalizedFromPayload = normalizeDeliveryStatusValue(parsed.status ?? parsed.ack);
+      if (normalizedFromPayload) return normalizedFromPayload;
+    } catch (_) {}
+  }
+
+  return 'sent';
+}
+
+function deliveryStatusLabel(status: Exclude<DeliveryStatus, null>): string {
+  if (status === 'failed') return 'Falhou';
+  if (status === 'read') return 'Lido';
+  if (status === 'delivered') return 'Entregue';
+  return 'Enviado';
+}
+
+function DeliveryStatusIcon({ status }: { status: Exclude<DeliveryStatus, null> }) {
+  if (status === 'failed') {
+    return <span className={styles.messageStatusFailedIcon}>!</span>;
+  }
+
+  if (status === 'sent') {
+    return (
+      <svg className={styles.messageStatusSvg} viewBox="0 0 12 10" aria-hidden="true">
+        <path className={styles.messageStatusStroke} d="M1.1 5.4L3.9 8L9.6 2.2" />
+      </svg>
+    );
+  }
+
+  return (
+    <svg className={styles.messageStatusSvg} viewBox="0 0 16 10" aria-hidden="true">
+      <path className={styles.messageStatusStroke} d="M1.1 5.4L3.9 8L9.6 2.2" />
+      <path className={styles.messageStatusStroke} d="M6.6 5.4L9.4 8L15.1 2.2" />
+    </svg>
+  );
 }
 
 function getLastMessageKey(messages: ChatMessage[]): string {
@@ -238,6 +467,7 @@ export function MessageList({ ticketSelected, messages, onReply }: MessageListPr
         {messages.map((message) => {
           const reply = message.reply_to_id ? messageMap.get(message.reply_to_id) : null;
           const messageType = normalizeMessageType(message);
+          const deliveryStatus = normalizeDeliveryStatus(message);
           const isMediaBubble =
             messageType === 'image'
             || messageType === 'sticker'
@@ -273,6 +503,15 @@ export function MessageList({ ticketSelected, messages, onReply }: MessageListPr
 
                 <footer className={styles.messageFooter}>
                   <span className={styles.messageTime}>{formatTime(message.created_at)}</span>
+                  {deliveryStatus ? (
+                    <span
+                      className={`${styles.messageStatus} ${deliveryStatus === 'read' ? styles.messageStatusRead : ''} ${deliveryStatus === 'failed' ? styles.messageStatusFailed : ''}`}
+                      aria-label={`Status: ${deliveryStatusLabel(deliveryStatus)}`}
+                      title={`Status: ${deliveryStatusLabel(deliveryStatus)}`}
+                    >
+                      <DeliveryStatusIcon status={deliveryStatus} />
+                    </span>
+                  ) : null}
                 </footer>
               </article>
             </div>

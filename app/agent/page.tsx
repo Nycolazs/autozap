@@ -4,7 +4,6 @@ import { useCallback, useEffect, useMemo, useState } from 'react';
 import { useRouter } from 'next/navigation';
 import {
   assignTicket,
-  fetchProfilePicture,
   getAuthSession,
   getConnectionStatus,
   getTicketMessages,
@@ -17,13 +16,14 @@ import {
   updateTicketStatus,
 } from '@/src/frontend/lib/chatApi';
 import { ApiRequestError } from '@/src/frontend/lib/http';
-import { clearAuthToken, resolveMediaUrl } from '@/src/frontend/lib/runtime';
+import { clearAuthToken, resolveProfilePictureUrl } from '@/src/frontend/lib/runtime';
 import { useInterval } from '@/src/frontend/hooks/useInterval';
 import { useToast } from '@/src/frontend/hooks/useToast';
 import type { ToastType } from '@/src/frontend/hooks/useToast';
 import { ChatHeader } from '@/src/frontend/components/chat/ChatHeader';
 import { MessageComposer } from '@/src/frontend/components/chat/MessageComposer';
 import { MessageList } from '@/src/frontend/components/chat/MessageList';
+import { TicketReminders } from '@/src/frontend/components/chat/TicketReminders';
 import { TicketList } from '@/src/frontend/components/chat/TicketList';
 import { ToastViewport } from '@/src/frontend/components/chat/ToastViewport';
 import type { Assignee, AuthSession, ChatMessage, Ticket } from '@/src/frontend/types/chat';
@@ -32,6 +32,46 @@ import styles from '@/src/frontend/components/chat/chat.module.css';
 function isClosedTicket(ticket: Ticket | null): boolean {
   if (!ticket) return true;
   return ticket.status === 'resolvido' || ticket.status === 'encerrado';
+}
+
+function phoneKey(value: unknown): string {
+  return String(value || '').trim();
+}
+
+function sameTicketSnapshot(current: Ticket[], next: Ticket[]): boolean {
+  if (current === next) return true;
+  if (current.length !== next.length) return false;
+
+  for (let i = 0; i < current.length; i += 1) {
+    const a = current[i];
+    const b = next[i];
+    if (Number(a.id) !== Number(b.id)) return false;
+    if (String(a.updated_at || '') !== String(b.updated_at || '')) return false;
+    if (String(a.status || '') !== String(b.status || '')) return false;
+    if (String(a.phone || '') !== String(b.phone || '')) return false;
+    if (String(a.contact_name || '') !== String(b.contact_name || '')) return false;
+    if (Number(a.seller_id || 0) !== Number(b.seller_id || 0)) return false;
+    if (String(a.seller_name || '') !== String(b.seller_name || '')) return false;
+    if (String(a.avatar_url || '') !== String(b.avatar_url || '')) return false;
+  }
+  return true;
+}
+
+function sameMessageSnapshot(current: ChatMessage[], next: ChatMessage[]): boolean {
+  if (current === next) return true;
+  if (current.length !== next.length) return false;
+
+  for (let i = 0; i < current.length; i += 1) {
+    const a = current[i];
+    const b = next[i];
+    if (Number(a.id) !== Number(b.id)) return false;
+    if (String(a.updated_at || '') !== String(b.updated_at || '')) return false;
+    if (String(a.content || '') !== String(b.content || '')) return false;
+    if (String(a.media_url || '') !== String(b.media_url || '')) return false;
+    if (String(a.message_status || '') !== String(b.message_status || '')) return false;
+    if (String(a.message_status_updated_at || '') !== String(b.message_status_updated_at || '')) return false;
+  }
+  return true;
 }
 
 export default function AgentPage() {
@@ -46,6 +86,7 @@ export default function AgentPage() {
   const [tickets, setTickets] = useState<Ticket[]>([]);
   const [ticketsLoading, setTicketsLoading] = useState(false);
   const [selectedTicketId, setSelectedTicketId] = useState<number | null>(null);
+  const [isPageVisible, setIsPageVisible] = useState(true);
 
   const [messages, setMessages] = useState<ChatMessage[]>([]);
   const [messagesLoading, setMessagesLoading] = useState(false);
@@ -119,7 +160,19 @@ export default function AgentPage() {
         userId: session.userId,
         includeClosed,
       });
-      setTickets(list);
+      setTickets((current) => (sameTicketSnapshot(current, list) ? current : list));
+      setAvatars((prev) => {
+        let next = prev;
+        for (const ticket of list) {
+          const key = phoneKey(ticket.phone);
+          if (!key || next[key]) continue;
+          const resolved = resolveProfilePictureUrl(key, ticket.avatar_url || '');
+          if (!resolved) continue;
+          if (next === prev) next = { ...prev };
+          next[key] = resolved;
+        }
+        return next;
+      });
       setSelectedTicketId((current) => {
         if (current && list.some((item) => item.id === current)) return current;
         return list.length ? list[0].id : null;
@@ -145,7 +198,7 @@ export default function AgentPage() {
     if (!silent) setMessagesLoading(true);
     try {
       const list = await getTicketMessages(selectedTicketId, 300);
-      setMessages(list);
+      setMessages((current) => (sameMessageSnapshot(current, list) ? current : list));
     } catch (error) {
       if (!silent) showToast('Falha ao carregar mensagens.', 'error');
       if (error instanceof ApiRequestError && error.status === 401) {
@@ -272,6 +325,14 @@ export default function AgentPage() {
   }, []);
 
   useEffect(() => {
+    if (typeof document === 'undefined') return;
+    const sync = () => setIsPageVisible(!document.hidden);
+    sync();
+    document.addEventListener('visibilitychange', sync);
+    return () => document.removeEventListener('visibilitychange', sync);
+  }, []);
+
+  useEffect(() => {
     if (!isMobileLayout) {
       setMobilePane('chat');
       return;
@@ -287,51 +348,19 @@ export default function AgentPage() {
   }, [selectedTicketId, loadMessages]);
 
   useInterval(() => {
-    if (!session) return;
+    if (!session || !isPageVisible) return;
     void loadConnectionStatus();
-  }, session ? 20000 : null);
+  }, session && isPageVisible ? 25000 : null);
 
   useInterval(() => {
-    if (!session) return;
+    if (!session || !isPageVisible) return;
     void loadTickets(true);
-  }, session ? 4500 : null);
+  }, session && isPageVisible ? 6500 : null);
 
   useInterval(() => {
-    if (!session || !selectedTicketId) return;
+    if (!session || !selectedTicketId || !isPageVisible) return;
     void loadMessages(true);
-  }, session && selectedTicketId ? 2200 : null);
-
-  const phonesWithoutAvatar = useMemo(() => {
-    const pending: string[] = [];
-    for (const ticket of tickets) {
-      const phone = String(ticket.phone || '').trim();
-      if (!phone) continue;
-      if (avatars[phone]) continue;
-      pending.push(phone);
-    }
-    return pending;
-  }, [avatars, tickets]);
-
-  useEffect(() => {
-    let canceled = false;
-    if (!phonesWithoutAvatar.length) return () => { canceled = true; };
-
-    (async () => {
-      for (const phone of phonesWithoutAvatar) {
-        try {
-          const response = await fetchProfilePicture(phone);
-          const raw = String(response.url || '').trim();
-          if (!raw || canceled) continue;
-          const resolved = resolveMediaUrl(raw);
-          setAvatars((prev) => (prev[phone] ? prev : { ...prev, [phone]: resolved }));
-        } catch (_) {}
-      }
-    })();
-
-    return () => {
-      canceled = true;
-    };
-  }, [phonesWithoutAvatar]);
+  }, session && selectedTicketId && isPageVisible ? 3200 : null);
 
   const handleSelectTicket = useCallback((ticketId: number) => {
     setSelectedTicketId(ticketId);
@@ -380,12 +409,20 @@ export default function AgentPage() {
         <section className={styles.chatPanel}>
           <ChatHeader
             ticket={activeTicket}
-            avatarUrl={activeTicket ? avatars[activeTicket.phone] || null : null}
+            avatarUrl={activeTicket ? (avatars[phoneKey(activeTicket.phone)] || null) : null}
             assignees={assignees}
             statusUpdating={statusUpdating}
             assigneeUpdating={assigneeUpdating}
             onStatusChange={handleStatusChange}
             onSellerChange={handleSellerChange}
+            reminderControl={(
+              <TicketReminders
+                ticketId={activeTicket ? activeTicket.id : null}
+                disabled={composerDisabled}
+                onToast={showToast}
+                onAuthExpired={handleAuthExpired}
+              />
+            )}
             showBackButton={isMobileLayout}
             onBack={() => setMobilePane('list')}
           />

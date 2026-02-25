@@ -11,7 +11,8 @@ declare global {
   }
 }
 
-const AUTH_TOKEN_KEY = 'AUTH_TOKEN';
+const AUTH_TOKEN_KEY = 'AUTH_TOKEN_SESSION';
+const LEGACY_AUTH_TOKEN_KEY = 'AUTH_TOKEN';
 const API_BASE_KEY = 'API_BASE';
 
 function isBrowser(): boolean {
@@ -22,6 +23,16 @@ function normalizeBase(value: string | null | undefined): string {
   const raw = String(value || '').trim();
   if (!raw) return '';
   return raw.replace(/\/+$/, '');
+}
+
+function normalizePhoneDigits(value: unknown): string {
+  return String(value || '').split('@')[0].replace(/\D/g, '');
+}
+
+function isProtectedAssetPath(pathname: string): boolean {
+  const normalized = String(pathname || '');
+  if (normalized.startsWith('/media/')) return true;
+  return /^\/profile-picture\/[^/]+\/image$/i.test(normalized);
 }
 
 export function isCapacitorNativeRuntime(): boolean {
@@ -46,6 +57,10 @@ export function isMobileBrowser(): boolean {
 export function getApiBase(): string {
   if (!isBrowser()) return '';
 
+  const envBase = normalizeBase(process.env.NEXT_PUBLIC_API_BASE || '');
+  const forceEnvBase = String(process.env.NEXT_PUBLIC_API_BASE_FORCE || '').trim() === '1';
+  if (forceEnvBase && envBase) return envBase;
+
   const runtimeBase = normalizeBase(window.API_BASE || window.__API_BASE__);
   if (runtimeBase) return runtimeBase;
 
@@ -54,6 +69,7 @@ export function getApiBase(): string {
     persistedBase = normalizeBase(localStorage.getItem(API_BASE_KEY));
   } catch (_) {}
   if (persistedBase) return persistedBase;
+  if (envBase) return envBase;
 
   const protocol = String(window.location.protocol || '').toLowerCase();
   const isFileProtocol = protocol === 'file:';
@@ -81,7 +97,7 @@ export function getAuthToken(): string {
   if (!isBrowser()) return '';
 
   try {
-    return String(localStorage.getItem(AUTH_TOKEN_KEY) || '').trim();
+    return String(sessionStorage.getItem(AUTH_TOKEN_KEY) || '').trim();
   } catch (_) {
     return '';
   }
@@ -93,10 +109,12 @@ export function setAuthToken(token: string): void {
   try {
     const normalized = String(token || '').trim();
     if (normalized) {
-      localStorage.setItem(AUTH_TOKEN_KEY, normalized);
+      sessionStorage.setItem(AUTH_TOKEN_KEY, normalized);
+      try { localStorage.removeItem(LEGACY_AUTH_TOKEN_KEY); } catch (_) {}
       return;
     }
-    localStorage.removeItem(AUTH_TOKEN_KEY);
+    sessionStorage.removeItem(AUTH_TOKEN_KEY);
+    try { localStorage.removeItem(LEGACY_AUTH_TOKEN_KEY); } catch (_) {}
   } catch (_) {}
 }
 
@@ -117,9 +135,72 @@ export function resolveMediaUrl(mediaPath: string | null | undefined): string {
 
   try {
     const parsed = new URL(resolved, isBrowser() ? window.location.origin : 'http://localhost');
-    if (!String(parsed.pathname || '').startsWith('/media/wa/')) return resolved;
+    if (!isProtectedAssetPath(String(parsed.pathname || ''))) return resolved;
     if (!parsed.searchParams.has('auth')) parsed.searchParams.set('auth', token);
     return parsed.toString();
+  } catch (_) {
+    return resolved;
+  }
+}
+
+export function resolveProfilePictureUrl(phone: string | null | undefined, directUrl?: string | null): string {
+  const rawDirect = String(directUrl || '').trim();
+  if (/^(blob:|data:)/i.test(rawDirect)) return rawDirect;
+  if (/^\/media\/profiles\//i.test(rawDirect)) {
+    const directLocal = resolveMediaUrl(rawDirect);
+    if (directLocal) return directLocal;
+  }
+
+  const normalizedPhone = normalizePhoneDigits(phone);
+  if (normalizedPhone) {
+    return resolveMediaUrl(`/profile-picture/${encodeURIComponent(normalizedPhone)}/image`);
+  }
+
+  return resolveMediaUrl(rawDirect);
+}
+
+export async function resolveMediaObjectUrl(
+  mediaPath: string | null | undefined,
+  opts?: { forceAuthFetch?: boolean }
+): Promise<string> {
+  const resolved = resolveMediaUrl(mediaPath);
+  if (!resolved) return '';
+  if (!isBrowser()) return resolved;
+  if (/^(blob:|data:)/i.test(resolved)) return resolved;
+
+  const forceAuthFetch = !!opts?.forceAuthFetch;
+  const token = getAuthToken();
+  if (!token && !forceAuthFetch) return resolved;
+
+  let parsed: URL;
+  try {
+    parsed = new URL(resolved, window.location.origin);
+  } catch (_) {
+    return resolved;
+  }
+
+  if (!isProtectedAssetPath(String(parsed.pathname || ''))) {
+    return resolved;
+  }
+
+  try {
+    const headers = new Headers();
+    if (token) {
+      headers.set('Authorization', `Bearer ${token}`);
+    }
+
+    const response = await fetch(parsed.toString(), {
+      method: 'GET',
+      headers,
+      credentials: 'include',
+      cache: 'no-store',
+    });
+
+    if (!response.ok) return resolved;
+
+    const blob = await response.blob();
+    if (!blob || blob.size === 0) return resolved;
+    return URL.createObjectURL(blob);
   } catch (_) {
     return resolved;
   }

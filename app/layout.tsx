@@ -18,9 +18,24 @@ type RootLayoutProps = {
 };
 
 export default function RootLayout({ children }: RootLayoutProps) {
+  const themeInitScript = `
+    (function () {
+      try {
+        var key = 'AUTOZAP_THEME';
+        var stored = localStorage.getItem(key);
+        var theme = stored === 'dark' || stored === 'light'
+          ? stored
+          : (window.matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light');
+        document.documentElement.setAttribute('data-theme', theme);
+        document.documentElement.style.colorScheme = theme;
+      } catch (_) {}
+    })();
+  `;
+
   return (
     <html lang="pt-BR" suppressHydrationWarning>
       <body suppressHydrationWarning>
+        <script dangerouslySetInnerHTML={{ __html: themeInitScript }} />
         <NativeSystemUi />
         {children}
       </body>

@@ -5,6 +5,7 @@ import type {
   ChatMessage,
   ConnectionStatus,
   ProfilePictureResponse,
+  TicketReminder,
   Ticket,
   UserType,
 } from '@/src/frontend/types/chat';
@@ -21,6 +22,51 @@ type TicketListOptions = {
   limit?: number;
   offset?: number;
 };
+
+function pickFirstString(values: unknown[]): string | null {
+  for (const value of values) {
+    const normalized = String(value || '').trim();
+    if (normalized) return normalized;
+  }
+  return null;
+}
+
+function normalizeProfilePictureResponse(payload: unknown): ProfilePictureResponse {
+  const source = payload && typeof payload === 'object'
+    ? payload as Record<string, unknown>
+    : {};
+
+  const nestedData =
+    source.data && typeof source.data === 'object'
+      ? source.data as Record<string, unknown>
+      : {};
+
+  const url = pickFirstString([
+    source.url,
+    source.avatar_url,
+    source.avatarUrl,
+    source.profile_picture_url,
+    source.profilePictureUrl,
+    source.profile_pic_url,
+    source.profilePicUrl,
+    nestedData.url,
+    nestedData.avatar_url,
+    nestedData.avatarUrl,
+    nestedData.profile_picture_url,
+    nestedData.profilePictureUrl,
+  ]);
+
+  const fromCacheRaw = source.fromCache ?? source.from_cache ?? nestedData.fromCache ?? nestedData.from_cache;
+  const pendingRaw = source.pending ?? nestedData.pending;
+  const sourceRaw = source.source ?? source.avatar_source ?? nestedData.source ?? nestedData.avatar_source;
+
+  return {
+    url,
+    fromCache: fromCacheRaw == null ? undefined : !!fromCacheRaw,
+    pending: pendingRaw == null ? undefined : !!pendingRaw,
+    source: sourceRaw == null ? undefined : String(sourceRaw || '').trim() || null,
+  };
+}
 
 export function getAuthSession(): Promise<AuthSession> {
   return requestJson<AuthSession>('/auth/session', { method: 'GET' });
@@ -141,12 +187,55 @@ export function assignTicket(ticketId: number, sellerId: number | null): Promise
   );
 }
 
-export function fetchProfilePicture(phone: string): Promise<ProfilePictureResponse> {
-  const normalized = String(phone || '').split('@')[0].replace(/\D/g, '');
-  return requestJson<ProfilePictureResponse>(
-    `/profile-picture/${encodeURIComponent(normalized)}`,
+export function listTicketReminders(ticketId: number): Promise<TicketReminder[]> {
+  return requestJson<TicketReminder[]>(
+    `/tickets/${encodeURIComponent(ticketId)}/reminders`,
     { method: 'GET' }
   );
+}
+
+export function createTicketReminder(
+  ticketId: number,
+  payload: { scheduled_at: string; note?: string | null; message?: string | null }
+): Promise<TicketReminder> {
+  return requestJson<TicketReminder>(
+    `/tickets/${encodeURIComponent(ticketId)}/reminders`,
+    {
+      method: 'POST',
+      body: payload,
+    }
+  );
+}
+
+export function updateReminder(
+  reminderId: number,
+  payload: {
+    scheduled_at?: string;
+    note?: string | null;
+    message?: string | null;
+    status?: 'scheduled' | 'canceled' | 'done' | 'resolvido';
+  }
+): Promise<TicketReminder> {
+  return requestJson<TicketReminder>(
+    `/reminders/${encodeURIComponent(reminderId)}`,
+    {
+      method: 'PATCH',
+      body: payload,
+    }
+  );
+}
+
+export async function fetchProfilePicture(
+  phone: string,
+  options?: { refresh?: boolean }
+): Promise<ProfilePictureResponse> {
+  const normalized = String(phone || '').split('@')[0].replace(/\D/g, '');
+  const refreshSuffix = options && options.refresh ? '?refresh=1' : '';
+  const payload = await requestJson<unknown>(
+    `/profile-picture/${encodeURIComponent(normalized)}${refreshSuffix}`,
+    { method: 'GET' }
+  );
+  return normalizeProfilePictureResponse(payload);
 }
 
 export function logout(): Promise<{ success: true }> {

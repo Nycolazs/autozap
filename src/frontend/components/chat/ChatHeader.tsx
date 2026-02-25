@@ -1,4 +1,6 @@
+import { useEffect, useState, type ReactNode } from 'react';
 import type { Assignee, Ticket } from '@/src/frontend/types/chat';
+import { resolveProfilePictureUrl } from '@/src/frontend/lib/runtime';
 import styles from '@/src/frontend/components/chat/chat.module.css';
 
 type ChatHeaderProps = {
@@ -9,6 +11,7 @@ type ChatHeaderProps = {
   assigneeUpdating?: boolean;
   onStatusChange: (status: Ticket['status']) => void;
   onSellerChange: (sellerId: number | null) => void;
+  reminderControl?: ReactNode;
   showBackButton?: boolean;
   onBack?: () => void;
 };
@@ -21,10 +24,17 @@ function statusLabel(status: Ticket['status']): string {
   return 'Encerrado';
 }
 
-function avatarLetter(ticket: Ticket | null): string {
+function avatarInitials(ticket: Ticket | null): string {
   if (!ticket) return '?';
   const name = String(ticket.contact_name || ticket.phone || '').trim();
-  return name.charAt(0).toUpperCase() || '?';
+  const tokens = name
+    .split(/\s+/)
+    .map((token) => token.replace(/[^a-zA-Z0-9]/g, ''))
+    .filter(Boolean);
+
+  if (!tokens.length) return '?';
+  if (tokens.length === 1) return tokens[0].slice(0, 2).toUpperCase();
+  return `${tokens[0].charAt(0)}${tokens[1].charAt(0)}`.toUpperCase();
 }
 
 export function ChatHeader({
@@ -35,9 +45,19 @@ export function ChatHeader({
   assigneeUpdating = false,
   onStatusChange,
   onSellerChange,
+  reminderControl = null,
   showBackButton = false,
   onBack,
 }: ChatHeaderProps) {
+  const resolvedAvatarUrl = avatarUrl || (ticket ? resolveProfilePictureUrl(ticket.phone, ticket.avatar_url || '') : '');
+  const [failedAvatar, setFailedAvatar] = useState('');
+
+  useEffect(() => {
+    setFailedAvatar('');
+  }, [resolvedAvatarUrl, ticket?.id]);
+
+  const showAvatarImage = !!resolvedAvatarUrl && failedAvatar !== resolvedAvatarUrl;
+
   return (
     <header className={styles.chatHeader}>
       <div className={styles.chatHeaderMain}>
@@ -53,10 +73,14 @@ export function ChatHeader({
         ) : null}
 
         <div className={styles.chatAvatar}>
-          {avatarUrl ? (
-            <img src={avatarUrl} alt={ticket?.contact_name || ticket?.phone || 'Contato'} />
+          {showAvatarImage ? (
+            <img
+              src={resolvedAvatarUrl}
+              alt=""
+              onError={() => setFailedAvatar(resolvedAvatarUrl)}
+            />
           ) : (
-            avatarLetter(ticket)
+            avatarInitials(ticket)
           )}
         </div>
 
@@ -124,6 +148,8 @@ export function ChatHeader({
               <span className={styles.dropdownCaret}>▾</span>
             </div>
           </div>
+
+          {reminderControl}
         </div>
       ) : null}
     </header>

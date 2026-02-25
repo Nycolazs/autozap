@@ -1,4 +1,6 @@
-import { formatTime } from '@/src/frontend/lib/runtime';
+import { useState } from 'react';
+import { formatTime, resolveProfilePictureUrl } from '@/src/frontend/lib/runtime';
+import { ThemeToggle } from '@/src/frontend/components/system/ThemeToggle';
 import type { Ticket } from '@/src/frontend/types/chat';
 import styles from '@/src/frontend/components/chat/chat.module.css';
 
@@ -39,9 +41,16 @@ function displayName(ticket: Ticket): string {
   return String(ticket.phone || '').trim();
 }
 
-function avatarLetter(ticket: Ticket): string {
+function avatarInitials(ticket: Ticket): string {
   const name = displayName(ticket);
-  return name.charAt(0).toUpperCase() || '?';
+  const tokens = name
+    .split(/\s+/)
+    .map((token) => token.replace(/[^a-zA-Z0-9]/g, ''))
+    .filter(Boolean);
+
+  if (!tokens.length) return '?';
+  if (tokens.length === 1) return tokens[0].slice(0, 2).toUpperCase();
+  return `${tokens[0].charAt(0)}${tokens[1].charAt(0)}`.toUpperCase();
 }
 
 export function TicketList({
@@ -58,6 +67,7 @@ export function TicketList({
   onOpenAdmin,
   onLogout,
 }: TicketListProps) {
+  const [failedAvatarByKey, setFailedAvatarByKey] = useState<Record<string, true>>({});
   const openCount = tickets.filter((ticket) => ticket.status !== 'encerrado' && ticket.status !== 'resolvido').length;
 
   return (
@@ -90,11 +100,14 @@ export function TicketList({
             <span className={styles.switchControl} aria-hidden="true" />
             <span className={styles.switchText}>Mostrar encerrados</span>
           </label>
-          {isAdmin ? (
-            <button type="button" className={styles.adminButton} onClick={onOpenAdmin}>
-              Painel admin
-            </button>
-          ) : null}
+          <div className={styles.sidebarControlRight}>
+            <ThemeToggle compact />
+            {isAdmin ? (
+              <button type="button" className={styles.adminButton} onClick={onOpenAdmin}>
+                Painel admin
+              </button>
+            ) : null}
+          </div>
         </div>
       </header>
 
@@ -107,7 +120,10 @@ export function TicketList({
         )}
         {tickets.map((ticket) => {
           const isSelected = ticket.id === selectedTicketId;
-          const avatarUrl = avatars[ticket.phone];
+          const phone = String(ticket.phone || '').trim();
+          const avatarUrl = avatars[phone] || resolveProfilePictureUrl(phone, ticket.avatar_url || '');
+          const avatarKey = `${ticket.id}:${avatarUrl}`;
+          const showAvatarImage = !!avatarUrl && !failedAvatarByKey[avatarKey];
           return (
             <button
               type="button"
@@ -116,7 +132,20 @@ export function TicketList({
               onClick={() => onSelect(ticket.id)}
             >
               <span className={styles.ticketAvatar}>
-                {avatarUrl ? <img src={avatarUrl} alt={displayName(ticket)} /> : avatarLetter(ticket)}
+                {showAvatarImage ? (
+                  <img
+                    src={avatarUrl}
+                    alt=""
+                    onError={() => {
+                      setFailedAvatarByKey((current) => {
+                        if (current[avatarKey]) return current;
+                        return { ...current, [avatarKey]: true };
+                      });
+                    }}
+                  />
+                ) : (
+                  avatarInitials(ticket)
+                )}
               </span>
               <span className={styles.ticketMain}>
                 <span className={styles.ticketName}>{displayName(ticket)}</span>

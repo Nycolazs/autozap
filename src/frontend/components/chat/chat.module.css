@@ -75,6 +75,12 @@
   gap: 10px;
 }
 
+.sidebarControlRight {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+}
+
 .switchLabel {
   display: inline-flex;
   align-items: center;
@@ -193,6 +199,8 @@
   justify-content: center;
   overflow: hidden;
   font-weight: 600;
+  font-size: 15px;
+  letter-spacing: 0.02em;
   flex-shrink: 0;
 }
 
@@ -289,7 +297,7 @@
   justify-content: space-between;
   align-items: flex-start;
   gap: 12px;
-  overflow: hidden;
+  overflow: visible;
 }
 
 .chatHeaderMain {
@@ -324,6 +332,8 @@
   justify-content: center;
   overflow: hidden;
   font-weight: 700;
+  font-size: 14px;
+  letter-spacing: 0.02em;
   flex-shrink: 0;
 }
 
@@ -424,6 +434,11 @@
   cursor: not-allowed;
 }
 
+.dropdownSelect option {
+  color: #253246;
+  background: #ffffff;
+}
+
 .dropdownCaret {
   position: absolute;
   right: 10px;
@@ -469,7 +484,6 @@
   padding-right: 6px;
   position: relative;
   transition: transform 120ms ease-out;
-  will-change: transform;
   box-sizing: border-box;
   overflow-x: hidden;
 }
@@ -538,17 +552,20 @@
 
 .bubbleClient {
   background: var(--az-bubble-client);
+  color: var(--az-text);
   border-top-left-radius: 4px;
 }
 
 .bubbleAgent {
   background: var(--az-bubble-agent);
+  color: var(--az-text);
   border-top-right-radius: 4px;
 }
 
 .bubbleSystem {
   background: var(--az-system);
   color: #204a7a;
+  border: 1px solid rgba(26, 115, 232, 0.16);
 }
 
 .messageClient .messageBubble {
@@ -591,6 +608,7 @@
 .messageText {
   font-size: 14px;
   line-height: 1.45;
+  color: inherit;
   white-space: pre-wrap;
   word-break: break-word;
   overflow-wrap: anywhere;
@@ -725,8 +743,8 @@
 .messageFooter {
   display: flex;
   justify-content: flex-end;
-  align-items: center;
-  gap: 10px;
+  align-items: flex-end;
+  gap: 5px;
   align-self: flex-end;
   max-width: 100%;
 }
@@ -740,6 +758,43 @@
 .messageTime {
   font-size: 11px;
   color: #5f7288;
+}
+
+.messageStatus {
+  color: #7d8fa1;
+  min-width: 16px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  line-height: 1;
+}
+
+.messageStatusSvg {
+  width: 16px;
+  height: 10px;
+  display: block;
+}
+
+.messageStatusStroke {
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 1.65;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+
+.messageStatusFailedIcon {
+  font-size: 11px;
+  font-weight: 800;
+  transform: translateY(-0.5px);
+}
+
+.messageStatusRead {
+  color: #53bdeb;
+}
+
+.messageStatusFailed {
+  color: #ef4444;
 }
 
 .replyAction {
@@ -803,6 +858,253 @@
   font-size: 13px;
   line-height: 1.4;
   white-space: pre-wrap;
+}
+
+.remindersWrap {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  flex-shrink: 0;
+}
+
+.remindersToggle {
+  border: 1px solid #c7d5e8;
+  background: linear-gradient(180deg, #fbfdff 0%, #f2f7ff 100%);
+  color: #1a3e68;
+  border-radius: 10px;
+  padding: 7px 10px;
+  font-size: 12px;
+  font-weight: 700;
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  width: fit-content;
+  cursor: pointer;
+  white-space: nowrap;
+  min-height: 34px;
+  transition: transform 120ms ease, border-color 140ms ease, background 140ms ease;
+}
+
+.remindersToggle:hover {
+  border-color: #a9c1e2;
+  background: linear-gradient(180deg, #ffffff 0%, #edf4ff 100%);
+}
+
+.remindersToggle:active {
+  transform: translateY(1px);
+}
+
+.remindersToggleIcon {
+  font-size: 13px;
+  line-height: 1;
+}
+
+.remindersCount {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 18px;
+  height: 18px;
+  border-radius: 7px;
+  border: 1px solid #bfd1ee;
+  background: #e6f0ff;
+  color: #0b57d0;
+  font-size: 10px;
+  font-weight: 800;
+  padding: 0 5px;
+}
+
+.remindersPanel {
+  position: absolute;
+  top: calc(100% + 8px);
+  right: 0;
+  width: min(420px, calc(100vw - 28px));
+  max-height: min(70vh, 560px);
+  overflow: auto;
+  border: 1px solid #d2e1f4;
+  border-radius: 14px;
+  background: linear-gradient(180deg, #ffffff 0%, #f8fbff 100%);
+  box-shadow: 0 18px 42px rgba(15, 23, 42, 0.2);
+  padding: 10px 10px 12px;
+  display: grid;
+  gap: 10px;
+  z-index: 40;
+}
+
+.remindersPanelHead {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  position: sticky;
+  top: -10px;
+  background: linear-gradient(180deg, #ffffff 0%, #f8fbff 100%);
+  padding: 1px 0 6px;
+  border-bottom: 1px solid #e3ecf8;
+  z-index: 1;
+}
+
+.remindersPanelTitle {
+  font-size: 12px;
+  font-weight: 800;
+  color: #21476f;
+}
+
+.remindersPanelClose {
+  width: 28px;
+  height: 28px;
+  border-radius: 8px;
+  border: 1px solid #c9daef;
+  background: #f7fbff;
+  color: #476184;
+  font-size: 18px;
+  line-height: 1;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+}
+
+.remindersForm {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 8px;
+}
+
+.remindersField,
+.remindersFieldWide {
+  display: grid;
+  gap: 4px;
+}
+
+.remindersField span,
+.remindersFieldWide span {
+  color: #4e6782;
+  font-size: 11px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.03em;
+}
+
+.remindersField input,
+.remindersFieldWide input,
+.remindersFieldWide textarea {
+  border: 1px solid #cad9ed;
+  border-radius: 10px;
+  background: #fff;
+  color: #102a43;
+  padding: 8px 10px;
+}
+
+.remindersFieldWide {
+  grid-column: 1 / -1;
+}
+
+.remindersFieldWide textarea {
+  resize: vertical;
+  min-height: 62px;
+}
+
+.remindersCreateButton {
+  grid-column: 1 / -1;
+  border: 1px solid rgba(11, 87, 208, 0.45);
+  border-radius: 10px;
+  background: linear-gradient(180deg, #1a73e8 0%, #0b57d0 100%);
+  color: #fff;
+  font-size: 12px;
+  font-weight: 700;
+  height: 36px;
+  cursor: pointer;
+}
+
+.remindersCreateButton:disabled {
+  opacity: 0.6;
+  cursor: not-allowed;
+}
+
+.remindersList {
+  display: grid;
+  gap: 8px;
+  max-height: 240px;
+  overflow: auto;
+  padding-right: 2px;
+}
+
+.remindersEmpty {
+  border: 1px dashed #ccdaed;
+  border-radius: 10px;
+  padding: 10px;
+  color: #637890;
+  font-size: 12px;
+  text-align: center;
+}
+
+.reminderItem {
+  border: 1px solid #d9e5f6;
+  border-radius: 11px;
+  padding: 9px 10px;
+  background: #f9fcff;
+  display: grid;
+  gap: 6px;
+}
+
+.reminderHead {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.reminderStatus {
+  border-radius: 999px;
+  border: 1px solid #bcd4f5;
+  background: #e6f0ff;
+  color: #1459a8;
+  font-size: 10px;
+  font-weight: 800;
+  padding: 3px 8px;
+}
+
+.reminderDate {
+  color: #5c728a;
+  font-size: 11px;
+  font-weight: 600;
+}
+
+.reminderNote {
+  color: #274460;
+  font-size: 12px;
+}
+
+.reminderMessage {
+  border-radius: 8px;
+  border: 1px solid #d5e2f4;
+  background: #fff;
+  padding: 7px 8px;
+  color: #20394f;
+  font-size: 12px;
+  white-space: pre-wrap;
+}
+
+.reminderActions {
+  display: inline-flex;
+  gap: 8px;
+}
+
+.reminderActions button {
+  border: 1px solid #c9daf4;
+  background: #fff;
+  color: #21466f;
+  border-radius: 999px;
+  padding: 5px 11px;
+  font-size: 11px;
+  font-weight: 700;
+  cursor: pointer;
+}
+
+.reminderActions button:disabled {
+  opacity: 0.6;
+  cursor: not-allowed;
 }
 
 .composerArea {
@@ -870,6 +1172,12 @@
   color: #102a43;
 }
 
+.composerInput:focus {
+  outline: none;
+  border-color: #8db2e4;
+  box-shadow: 0 0 0 3px rgba(26, 115, 232, 0.14);
+}
+
 .roundButton {
   width: 44px;
   height: 44px;
@@ -896,14 +1204,25 @@
 }
 
 .sendButton {
-  border: none;
+  border: 1px solid rgba(11, 87, 208, 0.45);
   border-radius: 999px;
-  background: var(--az-primary);
+  background: linear-gradient(180deg, #1a73e8 0%, #0b57d0 100%);
   color: #fff;
   font-weight: 700;
   height: 44px;
-  padding: 0 18px;
+  padding: 0 19px;
   cursor: pointer;
+  box-shadow: 0 8px 18px rgba(11, 87, 208, 0.28);
+  transition: transform 120ms ease, filter 140ms ease;
+}
+
+.sendButton:hover {
+  filter: brightness(1.02);
+  transform: translateY(-1px);
+}
+
+.sendButton:active {
+  transform: translateY(0);
 }
 
 .sendButton:disabled {
@@ -1087,10 +1406,9 @@
   width: 100%;
   height: 100%;
   transition:
-    transform 320ms cubic-bezier(0.2, 0.8, 0.25, 1),
-    opacity 260ms ease,
-    filter 260ms ease;
-  will-change: transform, opacity, filter;
+    transform 300ms cubic-bezier(0.2, 0.8, 0.25, 1),
+    opacity 220ms ease;
+  will-change: transform, opacity;
 }
 
 .pageMobile .sidebar {
@@ -1111,22 +1429,318 @@
 .pageMobileList .chatPanel {
   transform: translateX(102%) scale(0.985);
   opacity: 0.78;
-  filter: blur(2px);
   pointer-events: none;
 }
 
 .pageMobileChat .sidebar {
   transform: translateX(-18%) scale(0.985);
   opacity: 0.72;
-  filter: blur(2px);
   pointer-events: none;
 }
 
 .pageMobileChat .chatPanel {
   transform: translateX(0);
   opacity: 1;
-  filter: blur(0);
   pointer-events: auto;
+}
+
+:global(:root[data-theme='dark']) .page {
+  --az-primary: #4d99ff;
+  --az-primary-strong: #83b5ff;
+  --az-primary-soft: #1b2c45;
+  --az-surface: #121d2c;
+  --az-border: #29405b;
+  --az-text: #d8e8fb;
+  --az-muted: #97aec5;
+  --az-chat-bg: #0d1724;
+  --az-bubble-client: #18283b;
+  --az-bubble-agent: #203754;
+  --az-system: #1c2d42;
+  background: linear-gradient(180deg, #0a1320 0%, #0d1826 100%);
+}
+
+:global(:root[data-theme='dark']) .sidebar,
+:global(:root[data-theme='dark']) .chatHeader,
+:global(:root[data-theme='dark']) .composerArea {
+  background: linear-gradient(180deg, #162538 0%, #132236 100%);
+  border-color: #2b4360;
+}
+
+:global(:root[data-theme='dark']) .sidebarHeader {
+  background: linear-gradient(180deg, #152537 0%, #132234 100%);
+  border-color: #2b4360;
+}
+
+:global(:root[data-theme='dark']) .sidebarTitle {
+  color: #92bcff;
+}
+
+:global(:root[data-theme='dark']) .switchLabel {
+  color: #c4d8ef;
+}
+
+:global(:root[data-theme='dark']) .switchControl {
+  background: #20344a;
+  border-color: #3f5976;
+}
+
+:global(:root[data-theme='dark']) .switchControl::after {
+  background: #d8e8fb;
+  box-shadow: 0 1px 2px rgba(2, 6, 23, 0.5);
+}
+
+:global(:root[data-theme='dark']) .switchInput:checked + .switchControl {
+  background: #4d99ff;
+  border-color: #4d99ff;
+}
+
+:global(:root[data-theme='dark']) .adminButton,
+:global(:root[data-theme='dark']) .logoutButton {
+  border-color: #3f5f86;
+  background: #1a2f45;
+  color: #d4e6ff;
+}
+
+:global(:root[data-theme='dark']) .adminButton:hover,
+:global(:root[data-theme='dark']) .logoutButton:hover {
+  background: #213a55;
+}
+
+:global(:root[data-theme='dark']) .connected {
+  color: #8ec4ff;
+  background: #1f3652;
+}
+
+:global(:root[data-theme='dark']) .disconnected {
+  color: #ffb48e;
+  background: #4a2b1f;
+}
+
+:global(:root[data-theme='dark']) .ticketItem {
+  background: #152637;
+  border-color: #233a53;
+}
+
+:global(:root[data-theme='dark']) .ticketItem:hover {
+  background: #1a2f45;
+}
+
+:global(:root[data-theme='dark']) .ticketItemActive {
+  background: #203853;
+  box-shadow: inset 3px 0 0 #4d99ff;
+}
+
+:global(:root[data-theme='dark']) .messagesWrap {
+  background-image:
+    radial-gradient(rgba(186, 209, 236, 0.06) 1px, transparent 1px),
+    linear-gradient(180deg, #0e1a2a 0%, #0b1623 100%);
+}
+
+:global(:root[data-theme='dark']) .emptyChat {
+  background: rgba(18, 34, 52, 0.88);
+  border-color: #2c4664;
+  color: #b5c9df;
+}
+
+:global(:root[data-theme='dark']) .dropdownLabel,
+:global(:root[data-theme='dark']) .dropdownCaret {
+  color: #a5bdd7;
+}
+
+:global(:root[data-theme='dark']) .composerInput,
+:global(:root[data-theme='dark']) .recordComposer,
+:global(:root[data-theme='dark']) .mediaMenu,
+:global(:root[data-theme='dark']) .replyComposer {
+  background: #132233;
+  border-color: #2c4765;
+  color: #d8e8fb;
+}
+
+:global(:root[data-theme='dark']) .replyPreviewInBubble {
+  background: rgba(137, 171, 210, 0.16);
+}
+
+:global(:root[data-theme='dark']) .replyText {
+  color: #b7cbe2;
+}
+
+:global(:root[data-theme='dark']) .bubbleClient,
+:global(:root[data-theme='dark']) .bubbleAgent {
+  color: #d8e8fb;
+}
+
+:global(:root[data-theme='dark']) .bubbleSystem {
+  background: #1a2e44;
+  color: #d7e7fa;
+  border-color: #355474;
+}
+
+:global(:root[data-theme='dark']) .messageSystem .messageTime {
+  color: #bdd0e5;
+}
+
+:global(:root[data-theme='dark']) .audioPlayer {
+  background: #182b40;
+  border-color: #2d4a69;
+}
+
+:global(:root[data-theme='dark']) .audioPlayerOutgoing {
+  background: #193a33;
+  border-color: #2b5e52;
+}
+
+:global(:root[data-theme='dark']) .audioPlayButton {
+  background: #203754;
+  color: #8ec4ff;
+}
+
+:global(:root[data-theme='dark']) .audioPlayButtonOutgoing {
+  background: #245145;
+  color: #a7ebd4;
+}
+
+:global(:root[data-theme='dark']) .audioMetaText {
+  color: #afc5db;
+}
+
+:global(:root[data-theme='dark']) .audioTrackRange {
+  accent-color: #6baeff;
+}
+
+:global(:root[data-theme='dark']) .messageDocument {
+  background: #1b314a;
+  color: #96c6ff;
+}
+
+:global(:root[data-theme='dark']) .messageTime,
+:global(:root[data-theme='dark']) .messageStatus {
+  color: #9fb7cd;
+}
+
+:global(:root[data-theme='dark']) .messageStatusRead {
+  color: #6ec8ff;
+}
+
+:global(:root[data-theme='dark']) .messageStatusFailed {
+  color: #ff9a9a;
+}
+
+:global(:root[data-theme='dark']) .mediaMenuButton:hover {
+  background: #1e3249;
+}
+
+:global(:root[data-theme='dark']) .roundButton {
+  background: #1a2d43;
+  border-color: #345274;
+  color: #d6e8ff;
+}
+
+:global(:root[data-theme='dark']) .sendButton {
+  border-color: #5f96e4;
+  background: linear-gradient(180deg, #3c86ea 0%, #296bc7 100%);
+}
+
+:global(:root[data-theme='dark']) .dropdownSelect {
+  background: #17283b;
+  border-color: #2f4e70;
+  color: #d4e5fa;
+}
+
+:global(:root[data-theme='dark']) .dropdownSelect option {
+  color: #d4e5fa;
+  background: #17283b;
+}
+
+:global(:root[data-theme='dark']) .remindersToggle {
+  background: linear-gradient(180deg, #1b2f45 0%, #17283c 100%);
+  border-color: #355376;
+  color: #d4e6ff;
+}
+
+:global(:root[data-theme='dark']) .remindersToggle:hover {
+  border-color: #446893;
+  background: linear-gradient(180deg, #213650 0%, #1a2d44 100%);
+}
+
+:global(:root[data-theme='dark']) .remindersCount {
+  background: #234767;
+  border-color: #3c6691;
+  color: #cfe6ff;
+}
+
+:global(:root[data-theme='dark']) .remindersPanel {
+  background: linear-gradient(180deg, #132336 0%, #101f31 100%);
+  border-color: #2d4867;
+  box-shadow: 0 20px 44px rgba(2, 6, 23, 0.7);
+}
+
+:global(:root[data-theme='dark']) .remindersPanelHead {
+  background: linear-gradient(180deg, #132336 0%, #101f31 100%);
+  border-color: #2d4867;
+}
+
+:global(:root[data-theme='dark']) .remindersPanelTitle {
+  color: #d8e8fb;
+}
+
+:global(:root[data-theme='dark']) .remindersPanelClose {
+  background: #1a2d43;
+  border-color: #355375;
+  color: #bcd6f6;
+}
+
+:global(:root[data-theme='dark']) .remindersPanelClose:hover {
+  background: #223750;
+}
+
+:global(:root[data-theme='dark']) .reminderItem,
+:global(:root[data-theme='dark']) .remindersField input,
+:global(:root[data-theme='dark']) .remindersFieldWide input,
+:global(:root[data-theme='dark']) .remindersFieldWide textarea,
+:global(:root[data-theme='dark']) .reminderMessage,
+:global(:root[data-theme='dark']) .remindersEmpty,
+:global(:root[data-theme='dark']) .reminderActions button {
+  background: #152538;
+  border-color: #2d4867;
+  color: #d4e5fa;
+}
+
+:global(:root[data-theme='dark']) .remindersField span,
+:global(:root[data-theme='dark']) .remindersFieldWide span,
+:global(:root[data-theme='dark']) .reminderDate,
+:global(:root[data-theme='dark']) .reminderNote {
+  color: #a8c0d8;
+}
+
+:global(:root[data-theme='dark']) .reminderStatus {
+  background: #234767;
+  border-color: #3c6691;
+  color: #d2e7ff;
+}
+
+:global(:root[data-theme='dark']) .recordTimer {
+  color: #d8e8fb;
+}
+
+:global(:root[data-theme='dark']) .recordActionButtonCancel {
+  background: #4a2228;
+  color: #ffd5dc;
+}
+
+:global(:root[data-theme='dark']) .recordActionButtonSend {
+  background: #2d77de;
+}
+
+:global(:root[data-theme='dark']) .recordingHint {
+  background: #132133;
+  border-color: #2e4b6a;
+  color: #b7cde4;
+}
+
+:global(:root[data-theme='dark']) .recordingHintCancel {
+  background: #3f2428;
+  border-color: #6a3940;
+  color: #ffc8d0;
 }
 
 @media (max-width: 980px) {
@@ -1190,6 +1804,15 @@
     grid-template-columns: auto 1fr auto auto;
   }
 
+  .remindersForm {
+    grid-template-columns: 1fr;
+  }
+
+  .remindersPanel {
+    width: min(380px, calc(100vw - 24px));
+    max-height: min(66vh, 520px);
+  }
+
   .sendButton {
     width: 44px;
     padding: 0;
@@ -1223,6 +1846,10 @@
 
   .dropdownSelect {
     padding: 6px 26px 6px 8px;
+  }
+
+  .remindersToggle span:nth-child(2) {
+    display: none;
   }
 
   .recordComposer {

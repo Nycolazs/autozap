@@ -1,4 +1,5 @@
 import type { AdminSectionKey } from '@/src/frontend/types/admin';
+import { ThemeToggle } from '@/src/frontend/components/system/ThemeToggle';
 import styles from '@/src/frontend/components/admin/admin.module.css';
 
 type SidebarItem = {
@@ -51,6 +52,9 @@ export function AdminSidebar({ active, onChange, onOpenChat, onLogout }: AdminSi
       </nav>
 
       <div className={styles.sidebarFooter}>
+        <div className={styles.sidebarTheme}>
+          <ThemeToggle />
+        </div>
         <button type="button" className={styles.sidebarAction} onClick={onOpenChat}>
           Ir para o atendimento
         </button>

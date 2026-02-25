@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useMemo, useState } from 'react';
 import {
   changeAdminPassword,
   changeSellerPassword,
@@ -42,6 +42,14 @@ export function UsersSection({ onToast, onAuthExpired }: UsersSectionProps) {
   const [passwordTarget, setPasswordTarget] = useState<PasswordTarget | null>(null);
   const [passwordA, setPasswordA] = useState('');
   const [passwordB, setPasswordB] = useState('');
+
+  const stats = useMemo(() => {
+    const total = users.length;
+    const admins = users.filter((user) => user.isAdmin).length;
+    const sellers = users.filter((user) => user.isSeller).length;
+    const inactive = users.filter((user) => user.isSeller && !user.sellerActive).length;
+    return { total, admins, sellers, inactive };
+  }, [users]);
 
   const refresh = useCallback(async () => {
     setLoading(true);
@@ -252,78 +260,93 @@ export function UsersSection({ onToast, onAuthExpired }: UsersSectionProps) {
           {!loading && users.length === 0 ? <div className={styles.empty}>Nenhum usuario encontrado.</div> : null}
 
           {!!users.length ? (
-            <div className={styles.usersGrid}>
-              {users.map((user) => (
-                <article key={user.id} className={styles.userCard}>
-                  <div className={styles.userHead}>
-                    <div>
-                      <div className={styles.userName}>{user.name}</div>
-                      <div className={styles.userMeta}>Criado em: {formatDateOnly(user.created_at)}</div>
+            <>
+              <div className={styles.usersSummary}>
+                <span className={styles.usersSummaryPill}>Total: <strong>{stats.total}</strong></span>
+                <span className={styles.usersSummaryPill}>Admins: <strong>{stats.admins}</strong></span>
+                <span className={styles.usersSummaryPill}>Vendedores: <strong>{stats.sellers}</strong></span>
+                <span className={styles.usersSummaryPill}>Inativos: <strong>{stats.inactive}</strong></span>
+              </div>
+
+              <div className={styles.usersGrid}>
+                {users.map((user) => (
+                  <article key={user.id} className={styles.userCard}>
+                    <div className={styles.userHead}>
+                      <div className={styles.userIdentity}>
+                        <span className={styles.userAvatar} aria-hidden="true">
+                          {(String(user.name || '').trim().charAt(0) || '?').toUpperCase()}
+                        </span>
+                        <div>
+                          <div className={styles.userName}>{user.name}</div>
+                          <div className={styles.userMeta}>Criado em: {formatDateOnly(user.created_at)}</div>
+                        </div>
+                      </div>
+
+                      <div className={styles.badges}>
+                        {user.isAdmin ? <span className={`${styles.badge} ${styles.badgeAdmin}`}>Admin</span> : null}
+                        {user.isSeller ? <span className={`${styles.badge} ${styles.badgeSeller}`}>Vendedor</span> : null}
+                        {user.isSeller && !user.sellerActive ? <span className={`${styles.badge} ${styles.badgeDisabled}`}>Inativo</span> : null}
+                      </div>
                     </div>
-                    <div className={styles.badges}>
-                      {user.isAdmin ? <span className={`${styles.badge} ${styles.badgeAdmin}`}>Admin</span> : null}
-                      {user.isSeller ? <span className={`${styles.badge} ${styles.badgeSeller}`}>Vendedor</span> : null}
-                      {user.isSeller && !user.sellerActive ? <span className={`${styles.badge} ${styles.badgeDisabled}`}>Inativo</span> : null}
+
+                    <div className={styles.userActions}>
+                      <button
+                        type="button"
+                        className={`${styles.buttonSecondary} ${styles.userActionButton}`}
+                        onClick={() => setPasswordTarget({ id: user.id, name: user.name })}
+                        disabled={submitting}
+                      >
+                        Alterar senha
+                      </button>
+
+                      {!user.isAdmin && user.isSeller ? (
+                        <button
+                          type="button"
+                          className={`${styles.button} ${styles.userActionButton}`}
+                          onClick={() => void handlePromoteSeller(user)}
+                          disabled={submitting}
+                        >
+                          Fazer admin
+                        </button>
+                      ) : null}
+
+                      {user.isAdmin ? (
+                        <button
+                          type="button"
+                          className={`${styles.buttonGhost} ${styles.userActionButton} ${styles.userActionWide}`}
+                          onClick={() => void handleRevertToSeller(user)}
+                          disabled={submitting}
+                        >
+                          Tornar apenas vendedor
+                        </button>
+                      ) : null}
+
+                      {user.isAdmin && user.isSeller ? (
+                        <button
+                          type="button"
+                          className={`${styles.buttonDanger} ${styles.userActionButton} ${styles.userActionWide}`}
+                          onClick={() => void handleRemoveSellerRole(user)}
+                          disabled={submitting}
+                        >
+                          Remover papel vendedor
+                        </button>
+                      ) : null}
+
+                      {!user.isAdmin && user.isSeller ? (
+                        <button
+                          type="button"
+                          className={`${styles.buttonDanger} ${styles.userActionButton} ${styles.userActionWide}`}
+                          onClick={() => void handleRemoveSellerOnly(user)}
+                          disabled={submitting}
+                        >
+                          Remover vendedor
+                        </button>
+                      ) : null}
                     </div>
-                  </div>
-
-                  <div className={styles.inlineActions} style={{ marginTop: 10 }}>
-                    <button
-                      type="button"
-                      className={styles.buttonSecondary}
-                      onClick={() => setPasswordTarget({ id: user.id, name: user.name })}
-                      disabled={submitting}
-                    >
-                      Alterar senha
-                    </button>
-
-                    {!user.isAdmin && user.isSeller ? (
-                      <button
-                        type="button"
-                        className={styles.button}
-                        onClick={() => void handlePromoteSeller(user)}
-                        disabled={submitting}
-                      >
-                        Fazer admin
-                      </button>
-                    ) : null}
-
-                    {user.isAdmin ? (
-                      <button
-                        type="button"
-                        className={styles.buttonGhost}
-                        onClick={() => void handleRevertToSeller(user)}
-                        disabled={submitting}
-                      >
-                        Tornar apenas vendedor
-                      </button>
-                    ) : null}
-
-                    {user.isAdmin && user.isSeller ? (
-                      <button
-                        type="button"
-                        className={styles.buttonDanger}
-                        onClick={() => void handleRemoveSellerRole(user)}
-                        disabled={submitting}
-                      >
-                        Remover papel vendedor
-                      </button>
-                    ) : null}
-
-                    {!user.isAdmin && user.isSeller ? (
-                      <button
-                        type="button"
-                        className={styles.buttonDanger}
-                        onClick={() => void handleRemoveSellerOnly(user)}
-                        disabled={submitting}
-                      >
-                        Remover vendedor
-                      </button>
-                    ) : null}
-                  </div>
-                </article>
-              ))}
-            </div>
+                  </article>
+                ))}
+              </div>
+            </>
           ) : null}
         </div>
       </section>

@@ -4,6 +4,7 @@ import { useCallback, useEffect, useMemo, useState } from 'react';
 import { useRouter } from 'next/navigation';
 import { ApiRequestError } from '@/src/frontend/lib/http';
 import { getHasAdmin, setupAdmin } from '@/src/frontend/lib/authApi';
+import { ThemeToggle } from '@/src/frontend/components/system/ThemeToggle';
 import authStyles from '@/src/frontend/components/auth/auth.module.css';
 
 export default function WelcomePage() {
@@ -94,12 +95,15 @@ export default function WelcomePage() {
   return (
     <main className={`${authStyles.page} route-enter`}>
       <section className={authStyles.card}>
-        <h1 className={authStyles.title}>Bem-vindo ao AutoZap</h1>
+        <div className={authStyles.titleRow}>
+          <h1 className={authStyles.title}>Bem-vindo ao AutoZap</h1>
+          <ThemeToggle compact />
+        </div>
         <p className={authStyles.subtitle}>
           Este projeto ainda não possui administrador. Crie o primeiro usuário para iniciar.
         </p>
 
-        <form className={authStyles.form} onSubmit={handleSubmit}>
+        <form className={authStyles.form} onSubmit={handleSubmit} autoComplete="off">
           {errorMessage ? <p className={authStyles.error}>{errorMessage}</p> : null}
           {successMessage ? <p className={authStyles.success}>{successMessage}</p> : null}
 

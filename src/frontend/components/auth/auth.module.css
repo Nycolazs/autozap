@@ -17,6 +17,13 @@
   padding: 26px 24px;
 }
 
+.titleRow {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
 .title {
   margin: 0 0 6px;
   font-size: 30px;
@@ -52,6 +59,49 @@
   padding: 11px 12px;
   background: #fff;
   color: #102a43;
+}
+
+.passwordWrap {
+  position: relative;
+  display: block;
+}
+
+.passwordWrap .input {
+  width: 100%;
+  padding-right: 54px;
+}
+
+.passwordToggle {
+  position: absolute;
+  top: 50%;
+  right: 8px;
+  transform: translateY(-50%);
+  border: 1px solid #d2def2;
+  background: #f5f8ff;
+  color: #2b4f7a;
+  border-radius: 10px;
+  width: 38px;
+  height: 38px;
+  padding: 0;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+}
+
+.passwordToggleIcon {
+  width: 19px;
+  height: 19px;
+}
+
+.passwordToggle:hover {
+  background: #ecf3ff;
+  border-color: #c2d4f0;
+}
+
+.passwordToggle:disabled {
+  opacity: 0.55;
+  cursor: not-allowed;
 }
 
 .input:focus {
@@ -108,4 +158,36 @@
   margin: 0;
   font-size: 12px;
   color: #5c7088;
+}
+
+:global(:root[data-theme='dark']) .page {
+  background: linear-gradient(165deg, #0a1628 0%, #10223b 52%, #1a3a65 100%);
+}
+
+:global(:root[data-theme='dark']) .card {
+  background: #142235;
+  border-color: #2a4364;
+  box-shadow: 0 22px 48px rgba(0, 0, 0, 0.45);
+}
+
+:global(:root[data-theme='dark']) .title,
+:global(:root[data-theme='dark']) .label {
+  color: #d7e7fb;
+}
+
+:global(:root[data-theme='dark']) .subtitle,
+:global(:root[data-theme='dark']) .hint {
+  color: #9fb4cc;
+}
+
+:global(:root[data-theme='dark']) .input {
+  background: #101b2b;
+  border-color: #325071;
+  color: #d7e7fb;
+}
+
+:global(:root[data-theme='dark']) .passwordToggle {
+  background: #1b2d45;
+  border-color: #36557a;
+  color: #d4e7ff;
 }

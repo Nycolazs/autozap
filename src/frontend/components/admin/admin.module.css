@@ -74,7 +74,6 @@
   box-shadow:
     0 18px 34px rgba(11, 34, 69, 0.14),
     inset 0 1px 0 rgba(255, 255, 255, 0.75);
-  backdrop-filter: blur(8px);
 }
 
 .brandWrap {
@@ -152,6 +151,14 @@
   box-shadow: 0 14px 26px rgba(11, 87, 208, 0.28);
 }
 
+.navButtonActive:hover {
+  border-color: #6ea2ea;
+  background: linear-gradient(180deg, #1a73e8 0%, #0b57d0 100%);
+  color: #fff;
+  box-shadow: 0 14px 26px rgba(11, 87, 208, 0.28);
+  transform: translateY(-1px);
+}
+
 .navButtonIcon {
   width: 30px;
   height: 30px;
@@ -199,6 +206,11 @@
   gap: 8px;
 }
 
+.sidebarTheme {
+  display: flex;
+  justify-content: flex-end;
+}
+
 .sidebarAction {
   border: 1px solid #cbdbf2;
   background: #f8fbff;
@@ -229,7 +241,6 @@
   box-shadow:
     0 18px 34px rgba(11, 34, 69, 0.14),
     inset 0 1px 0 rgba(255, 255, 255, 0.72);
-  backdrop-filter: blur(8px);
 }
 
 .header {
@@ -400,6 +411,11 @@
   border-color: #abc7eb;
 }
 
+.select option {
+  color: #102a43;
+  background: #ffffff;
+}
+
 .input:focus,
 .select:focus,
 .textarea:focus {
@@ -488,68 +504,148 @@
 
 .usersGrid {
   display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
-  gap: 12px;
+  grid-template-columns: repeat(auto-fill, minmax(300px, 1fr));
+  gap: 14px;
+}
+
+.usersSummary {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 9px;
+  margin-bottom: 14px;
+}
+
+.usersSummaryPill {
+  border-radius: 999px;
+  border: 1px solid #c6daf5;
+  background: linear-gradient(180deg, #f8fbff 0%, #edf4ff 100%);
+  color: #24466c;
+  font-size: 0.78rem;
+  font-weight: 700;
+  padding: 6px 12px;
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.75);
 }
 
 .userCard {
-  border: 1px solid #d9e6f8;
-  border-radius: 13px;
-  padding: 12px;
-  background: linear-gradient(180deg, #ffffff 0%, #fbfdff 100%);
-  box-shadow: 0 8px 16px rgba(11, 34, 69, 0.06);
+  border: 1px solid #cfe0f5;
+  border-radius: 15px;
+  padding: 14px;
+  background: linear-gradient(180deg, #ffffff 0%, #f8fbff 100%);
+  box-shadow: 0 10px 18px rgba(11, 34, 69, 0.07);
   transition: border-color 180ms ease, transform 180ms ease, box-shadow 180ms ease;
+  display: grid;
+  gap: 12px;
 }
 
 .userCard:hover {
-  border-color: #a6c3ea;
+  border-color: #95b8e6;
   transform: translateY(-2px);
-  box-shadow: 0 14px 24px rgba(11, 34, 69, 0.1);
+  box-shadow: 0 16px 26px rgba(11, 34, 69, 0.11);
 }
 
 .userHead {
   display: flex;
   justify-content: space-between;
-  gap: 8px;
+  align-items: flex-start;
+  gap: 10px;
+}
+
+.userIdentity {
+  display: flex;
+  align-items: center;
+  gap: 11px;
+  min-width: 0;
+}
+
+.userAvatar {
+  width: 42px;
+  height: 42px;
+  border-radius: 50%;
+  border: 1px solid #bdd3f2;
+  background: linear-gradient(180deg, #edf4ff 0%, #e0ecff 100%);
+  color: #1f4a7a;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 1rem;
+  font-weight: 800;
+  flex-shrink: 0;
 }
 
 .userName {
+  font-size: 1.02rem;
+  line-height: 1.2;
   font-weight: 800;
-  color: #0f172a;
+  color: #122033;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 
 .userMeta {
-  margin-top: 8px;
-  font-size: 0.8rem;
-  color: #64748b;
+  margin-top: 5px;
+  font-size: 0.77rem;
+  color: #60738a;
 }
 
 .badges {
   display: flex;
+  align-items: flex-start;
+  justify-content: flex-end;
   gap: 6px;
   flex-wrap: wrap;
+  max-width: 52%;
 }
 
 .badge {
-  padding: 3px 8px;
+  display: inline-flex;
+  align-items: center;
+  white-space: nowrap;
+  padding: 4px 9px;
   border-radius: 999px;
-  font-size: 0.73rem;
-  font-weight: 700;
+  border: 1px solid transparent;
+  font-size: 0.72rem;
+  font-weight: 800;
+  line-height: 1;
+  letter-spacing: 0.01em;
 }
 
 .badgeAdmin {
-  background: #fef3c7;
-  color: #92400e;
+  background: #fff4d6;
+  border-color: #f0d79d;
+  color: #8f490f;
 }
 
 .badgeSeller {
-  background: #dbeafe;
-  color: #1e3a8a;
+  background: #e3efff;
+  border-color: #c5d9f7;
+  color: #24477b;
 }
 
 .badgeDisabled {
-  background: #fee2e2;
-  color: #991b1b;
+  background: #fee8e8;
+  border-color: #f7c2c2;
+  color: #9b1e1e;
+}
+
+.userActions {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 8px;
+  margin-top: 2px;
+}
+
+.userActionButton {
+  width: 100%;
+  min-height: 40px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  text-align: center;
+}
+
+.userActionWide {
+  grid-column: 1 / -1;
 }
 
 .tableWrap {
@@ -664,6 +760,157 @@
   justify-content: center;
   color: #35506f;
   padding: calc(var(--safe-area-top) + 20px) 20px calc(var(--safe-area-bottom) + 20px);
+}
+
+:global(:root[data-theme='dark']) .page {
+  --admin-primary: #4d99ff;
+  --admin-primary-strong: #77adff;
+  --admin-primary-soft: #14253c;
+  --admin-surface: #111b29;
+  --admin-surface-strong: #141f2e;
+  --admin-border: #23384f;
+  --admin-border-strong: #2f4a67;
+  --admin-text: #dce9f8;
+  --admin-muted: #94a9bf;
+  background:
+    radial-gradient(circle at 10% -8%, rgba(77, 153, 255, 0.18), transparent 36%),
+    radial-gradient(circle at 88% 108%, rgba(46, 102, 189, 0.22), transparent 38%),
+    linear-gradient(180deg, #0a1320 0%, #0c1726 100%);
+}
+
+:global(:root[data-theme='dark']) .sidebar,
+:global(:root[data-theme='dark']) .content {
+  background: linear-gradient(180deg, rgba(20, 30, 44, 0.96) 0%, rgba(15, 24, 37, 0.96) 100%);
+  border-color: var(--admin-border);
+  box-shadow: 0 14px 28px rgba(0, 0, 0, 0.32);
+}
+
+:global(:root[data-theme='dark']) .header,
+:global(:root[data-theme='dark']) .cardHead {
+  background: linear-gradient(180deg, #172333 0%, #141f2e 100%);
+  border-color: #24394f;
+}
+
+:global(:root[data-theme='dark']) .title,
+:global(:root[data-theme='dark']) .headerBadgeValue,
+:global(:root[data-theme='dark']) .cardHead,
+:global(:root[data-theme='dark']) .brand,
+:global(:root[data-theme='dark']) .navButtonTitle,
+:global(:root[data-theme='dark']) .userName {
+  color: #dce9f8;
+}
+
+:global(:root[data-theme='dark']) .subtitle,
+:global(:root[data-theme='dark']) .brandSub,
+:global(:root[data-theme='dark']) .muted,
+:global(:root[data-theme='dark']) .headerBadgeLabel,
+:global(:root[data-theme='dark']) .navButtonHint,
+:global(:root[data-theme='dark']) .userMeta {
+  color: #95aac2;
+}
+
+:global(:root[data-theme='dark']) .headerBadge,
+:global(:root[data-theme='dark']) .tableWrap,
+:global(:root[data-theme='dark']) .input,
+:global(:root[data-theme='dark']) .select,
+:global(:root[data-theme='dark']) .textarea,
+:global(:root[data-theme='dark']) .empty,
+:global(:root[data-theme='dark']) .userCard,
+:global(:root[data-theme='dark']) .usersSummaryPill {
+  background: #172434;
+  border-color: #28405b;
+  color: #d3e5fb;
+}
+
+:global(:root[data-theme='dark']) .usersSummaryPill {
+  background: linear-gradient(180deg, #1d3046 0%, #17293d 100%);
+  border-color: #355272;
+  color: #d8e8fb;
+  box-shadow: inset 0 1px 0 rgba(201, 224, 255, 0.06);
+}
+
+:global(:root[data-theme='dark']) .userCard {
+  background: linear-gradient(180deg, #1a2c40 0%, #152536 100%);
+  border-color: #315073;
+}
+
+:global(:root[data-theme='dark']) .userAvatar {
+  background: linear-gradient(180deg, #243d5a 0%, #20354f 100%);
+  border-color: #456486;
+  color: #d5e8ff;
+}
+
+:global(:root[data-theme='dark']) .badgeAdmin {
+  background: #493c21;
+  border-color: #6e5b2c;
+  color: #f8e5ac;
+}
+
+:global(:root[data-theme='dark']) .badgeSeller {
+  background: #263f5c;
+  border-color: #3f628b;
+  color: #d3e6ff;
+}
+
+:global(:root[data-theme='dark']) .badgeDisabled {
+  background: #4a2830;
+  border-color: #72424b;
+  color: #ffd4dc;
+}
+
+:global(:root[data-theme='dark']) .select option {
+  color: #d3e5fb;
+  background: #172434;
+}
+
+:global(:root[data-theme='dark']) .navButton {
+  background: linear-gradient(180deg, #182739 0%, #132233 100%);
+  border-color: #29405b;
+  color: #d5e6fb;
+}
+
+:global(:root[data-theme='dark']) .navButton:hover {
+  background: linear-gradient(180deg, #1b2f45 0%, #16283d 100%);
+  border-color: #3a5c83;
+}
+
+:global(:root[data-theme='dark']) .navButtonActive,
+:global(:root[data-theme='dark']) .navButtonActive:hover {
+  background: linear-gradient(180deg, #2c79df 0%, #205fb6 100%);
+  border-color: #4f95ee;
+  color: #fff;
+}
+
+:global(:root[data-theme='dark']) .sidebarAction,
+:global(:root[data-theme='dark']) .buttonSecondary,
+:global(:root[data-theme='dark']) .buttonGhost {
+  background: #1a2c41;
+  border-color: #345272;
+  color: #d4e7ff;
+}
+
+:global(:root[data-theme='dark']) .sidebarAction:hover,
+:global(:root[data-theme='dark']) .buttonSecondary:hover,
+:global(:root[data-theme='dark']) .buttonGhost:hover {
+  background: #20364f;
+}
+
+:global(:root[data-theme='dark']) .table {
+  background: #142333;
+}
+
+:global(:root[data-theme='dark']) .table th,
+:global(:root[data-theme='dark']) .table td {
+  border-color: #24394f;
+}
+
+:global(:root[data-theme='dark']) .table th {
+  background: #182a3d;
+  color: #cfe1f6;
+}
+
+:global(:root[data-theme='dark']) .table tbody tr:hover {
+  background: #1b3046;
 }
 
 @keyframes adminBlobFloat {
@@ -798,6 +1045,14 @@
 
   .table {
     min-width: 620px;
+  }
+
+  .userActions {
+    grid-template-columns: 1fr;
+  }
+
+  .userActionWide {
+    grid-column: span 1;
   }
 }
 
