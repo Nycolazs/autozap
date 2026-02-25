@@ -22,6 +22,8 @@ COPY src ./src
 COPY server.js ./server.js
 COPY next.config.ts ./next.config.ts
 COPY package.json ./package.json
+COPY tsconfig.json ./tsconfig.json
+COPY next-env.d.ts ./next-env.d.ts
 
 RUN npm run build
 
