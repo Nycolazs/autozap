@@ -17,6 +17,16 @@ function statusClass(status: string): string {
   return `${styles.status} ${styles.statusFechado}`;
 }
 
+function statusLabel(status: string): string {
+  const normalized = String(status || '').trim().toLowerCase();
+  if (normalized === 'pendente') return 'Pendente';
+  if (normalized === 'aguardando') return 'Aguardando';
+  if (normalized === 'em_atendimento') return 'Em Atendimento';
+  if (normalized === 'resolvido') return 'Resolvido';
+  if (normalized === 'encerrado') return 'Encerrado';
+  return String(status || '').replace(/_/g, ' ');
+}
+
 export function TicketsSection({ onToast, onAuthExpired }: TicketsSectionProps) {
   const [tickets, setTickets] = useState<AdminTicket[]>([]);
   const [assignees, setAssignees] = useState<Assignee[]>([]);
@@ -116,7 +126,7 @@ export function TicketsSection({ onToast, onAuthExpired }: TicketsSectionProps) 
               <option value="">Todos</option>
               <option value="pendente">Pendente</option>
               <option value="aguardando">Aguardando</option>
-              <option value="em_atendimento">Em atendimento</option>
+              <option value="em_atendimento">Em Atendimento</option>
               <option value="resolvido">Resolvido</option>
               <option value="encerrado">Encerrado</option>
             </select>
@@ -158,7 +168,7 @@ export function TicketsSection({ onToast, onAuthExpired }: TicketsSectionProps) 
                   <tr key={ticket.id}>
                     <td>{ticket.contact_name || '-'}</td>
                     <td>{ticket.phone}</td>
-                    <td><span className={statusClass(ticket.status)}>{ticket.status}</span></td>
+                    <td><span className={statusClass(ticket.status)}>{statusLabel(ticket.status)}</span></td>
                     <td>
                       <select
                         className={styles.select}

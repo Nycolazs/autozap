@@ -151,6 +151,19 @@ function parseProxyApiBase(rawValue) {
   }
 }
 
+function readProxyApiBaseFromRequest(req) {
+  const fromHeader = req && req.headers ? req.headers['x-api-base'] : '';
+  const fromQuery = req && req.query ? (req.query.__api_base || req.query.api_base) : '';
+
+  const values = [fromHeader, fromQuery];
+  for (const value of values) {
+    const parsed = parseProxyApiBase(Array.isArray(value) ? value[0] : value);
+    if (parsed) return parsed;
+  }
+
+  return null;
+}
+
 function audioExtFromMime(mimetype, originalName) {
   const mime = String(mimetype || '').toLowerCase();
   if (mime.includes('ogg')) return '.ogg';
@@ -175,14 +188,16 @@ function imageExtFromMime(mimetype, originalName) {
 }
 
 async function proxyApiRequest(req, res) {
-  const targetBase = parseProxyApiBase(req.headers['x-api-base']);
+  const targetBase = readProxyApiBaseFromRequest(req);
   if (!targetBase) {
-    return res.status(400).json({ error: 'x-api-base inválido para proxy' });
+    return res.status(400).json({ error: 'x-api-base/__api_base inválido para proxy' });
   }
 
   const originalUrl = String(req.originalUrl || '/__api');
   const upstreamPath = originalUrl.replace(/^\/__api/, '') || '/';
   const upstreamUrl = new URL(upstreamPath, `${targetBase.protocol}//${targetBase.host}`);
+  upstreamUrl.searchParams.delete('__api_base');
+  upstreamUrl.searchParams.delete('api_base');
 
   const headers = {};
   for (const [key, value] of Object.entries(req.headers || {})) {
@@ -259,6 +274,7 @@ async function bootstrap() {
 
   const app = express();
   const server = http.createServer(app);
+  const managedExternalRuntime = String(process.env.AUTOZAP_SERVER_MANAGED_EXTERNALLY || '').trim() === '1';
   const webhookRuntime = {
     totalVerifyRequests: 0,
     totalWebhookPosts: 0,
@@ -603,16 +619,27 @@ async function bootstrap() {
     logger,
   });
 
-  try {
-    await service.startBot();
-  } catch (err) {
-    logger.error('[whatsapp] falha ao inicializar camada WhatsApp Cloud API', err);
+  const createNoopController = () => ({ stop() {} });
+
+  if (!managedExternalRuntime) {
+    try {
+      await service.startBot();
+    } catch (err) {
+      logger.error('[whatsapp] falha ao inicializar camada WhatsApp Cloud API', err);
+    }
+  } else {
+    logger.info('[runtime] AUTOZAP_SERVER_MANAGED_EXTERNALLY=1 ativo: integração WhatsApp local desabilitada.');
   }
 
-  const autoAwaitJob = startAutoAwaitJob({ db });
-  const webhookInboxSync = startWebhookInboxSync({
-    processWebhookPayload: service.processWebhookPayload,
-  });
+  const autoAwaitJob = managedExternalRuntime
+    ? createNoopController()
+    : startAutoAwaitJob({ db });
+
+  const webhookInboxSync = managedExternalRuntime
+    ? createNoopController()
+    : startWebhookInboxSync({
+      processWebhookPayload: service.processWebhookPayload,
+    });
 
   const port = Number(process.env.PORT || 3000);
   const host = process.env.HOST || '0.0.0.0';

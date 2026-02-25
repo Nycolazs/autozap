@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { formatTime, resolveProfilePictureUrl } from '@/src/frontend/lib/runtime';
 import { ThemeToggle } from '@/src/frontend/components/system/ThemeToggle';
 import type { Ticket } from '@/src/frontend/types/chat';
@@ -17,6 +17,7 @@ type TicketListProps = {
   onSelect: (ticketId: number) => void;
   onOpenAdmin: () => void;
   onLogout: () => void;
+  onAvatarError?: (phone: string) => void;
 };
 
 function statusLabel(status: Ticket['status']): string {
@@ -66,9 +67,21 @@ export function TicketList({
   onSelect,
   onOpenAdmin,
   onLogout,
+  onAvatarError,
 }: TicketListProps) {
   const [failedAvatarByKey, setFailedAvatarByKey] = useState<Record<string, true>>({});
   const openCount = tickets.filter((ticket) => ticket.status !== 'encerrado' && ticket.status !== 'resolvido').length;
+
+  useEffect(() => {
+    const timer = window.setInterval(() => {
+      setFailedAvatarByKey({});
+    }, 20000);
+    return () => window.clearInterval(timer);
+  }, []);
+
+  useEffect(() => {
+    setFailedAvatarByKey({});
+  }, [avatars]);
 
   return (
     <aside className={styles.sidebar}>
@@ -141,6 +154,9 @@ export function TicketList({
                         if (current[avatarKey]) return current;
                         return { ...current, [avatarKey]: true };
                       });
+                      if (typeof onAvatarError === 'function') {
+                        onAvatarError(phone);
+                      }
                     }}
                   />
                 ) : (

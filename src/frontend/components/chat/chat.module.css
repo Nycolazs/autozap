@@ -287,6 +287,7 @@
   min-width: 0;
   min-height: 0;
   background: var(--az-chat-bg);
+  overflow-x: hidden;
 }
 
 .chatHeader {
@@ -295,7 +296,7 @@
   padding: 10px 14px;
   display: flex;
   justify-content: space-between;
-  align-items: flex-start;
+  align-items: center;
   gap: 12px;
   overflow: visible;
 }
@@ -305,6 +306,7 @@
   align-items: center;
   gap: 10px;
   min-width: 0;
+  flex: 1;
 }
 
 .headerBackButton {
@@ -347,12 +349,35 @@
   min-width: 0;
 }
 
+.chatTitleRow {
+  min-width: 0;
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  max-width: 100%;
+}
+
 .chatTitle {
   font-size: 14px;
   font-weight: 700;
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
+}
+
+.chatTicketBadge {
+  display: inline-flex;
+  align-items: center;
+  border-radius: 999px;
+  border: 1px solid #bfd4f1;
+  background: #e8f1ff;
+  color: #1d4f84;
+  font-size: 10px;
+  font-weight: 800;
+  line-height: 1;
+  padding: 3px 8px;
+  white-space: nowrap;
+  flex-shrink: 0;
 }
 
 .chatSubTitle {
@@ -367,10 +392,11 @@
   display: flex;
   align-items: flex-end;
   justify-content: flex-end;
-  flex-wrap: wrap;
+  flex-wrap: nowrap;
   gap: 10px;
   min-width: 0;
-  flex: 1;
+  flex-shrink: 1;
+  margin-left: auto;
 }
 
 .connectionBadge {
@@ -474,6 +500,23 @@
   padding: 24px;
   text-align: center;
   color: var(--az-muted);
+}
+
+.emptyChatLoading {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 6px;
+}
+
+.emptyChatLoadingTitle {
+  font-weight: 700;
+  color: #2a4260;
+}
+
+.emptyChatLoadingSubtle {
+  font-size: 12px;
+  color: #6d8297;
 }
 
 .messageRow {
@@ -860,6 +903,192 @@
   white-space: pre-wrap;
 }
 
+.ticketHistoryWrap {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  flex-shrink: 0;
+  min-width: 0;
+  overflow: visible;
+}
+
+.ticketHistoryWrapOpen {
+  overflow: visible;
+}
+
+.ticketHistoryButton {
+  border: 1px solid #c7d8ee;
+  background: linear-gradient(180deg, #ffffff 0%, #edf4ff 100%);
+  color: #1f4773;
+  border-radius: 999px;
+  min-height: 34px;
+  padding: 0 11px;
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  font-size: 12px;
+  font-weight: 700;
+  cursor: pointer;
+  white-space: nowrap;
+  transition: transform 120ms ease, border-color 140ms ease, background 140ms ease;
+  max-width: min(100%, 250px);
+  min-width: 0;
+}
+
+.ticketHistoryButton:hover {
+  border-color: #acc6e5;
+  background: linear-gradient(180deg, #ffffff 0%, #e8f1ff 100%);
+}
+
+.ticketHistoryButton:disabled {
+  opacity: 0.6;
+  cursor: not-allowed;
+  transform: none;
+}
+
+.ticketHistoryButtonIcon {
+  font-size: 13px;
+  line-height: 1;
+}
+
+.ticketHistoryButtonText {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  max-width: 158px;
+}
+
+.ticketHistoryButtonCount {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 18px;
+  height: 18px;
+  border-radius: 999px;
+  border: 1px solid #bfd1ee;
+  background: #e6f0ff;
+  color: #0b57d0;
+  font-size: 10px;
+  font-weight: 800;
+  line-height: 1;
+  padding: 0 5px;
+}
+
+.ticketHistoryPanel {
+  position: absolute;
+  top: calc(100% + 8px);
+  right: 0;
+  width: min(430px, calc(100vw - 28px));
+  max-height: min(65vh, 520px);
+  overflow: auto;
+  border: 1px solid #d2e1f4;
+  border-radius: 14px;
+  background: linear-gradient(180deg, #ffffff 0%, #f8fbff 100%);
+  box-shadow: 0 18px 42px rgba(15, 23, 42, 0.2);
+  padding: 10px;
+  display: grid;
+  gap: 10px;
+  z-index: 45;
+}
+
+.ticketHistoryPanelHead {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  position: sticky;
+  top: -10px;
+  background: linear-gradient(180deg, #ffffff 0%, #f8fbff 100%);
+  padding: 1px 0 6px;
+  border-bottom: 1px solid #e3ecf8;
+  z-index: 1;
+}
+
+.ticketHistoryPanelTitle {
+  font-size: 12px;
+  font-weight: 800;
+  color: #21476f;
+}
+
+.ticketHistoryPanelClose {
+  width: 28px;
+  height: 28px;
+  border-radius: 8px;
+  border: 1px solid #c9daef;
+  background: #f7fbff;
+  color: #476184;
+  font-size: 18px;
+  line-height: 1;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+}
+
+.ticketHistoryList {
+  display: grid;
+  gap: 8px;
+}
+
+.ticketHistoryEmpty {
+  border: 1px dashed #ccdaed;
+  border-radius: 10px;
+  padding: 10px;
+  color: #637890;
+  font-size: 12px;
+  text-align: center;
+}
+
+.ticketHistoryItem {
+  width: 100%;
+  text-align: left;
+  border: 1px solid #d9e5f6;
+  border-radius: 11px;
+  padding: 9px 10px;
+  background: #f9fcff;
+  display: grid;
+  gap: 4px;
+  cursor: pointer;
+}
+
+.ticketHistoryItemActive {
+  border-color: #8fb3e2;
+  background: #eaf3ff;
+}
+
+.ticketHistoryItemMain {
+  font-size: 12px;
+  font-weight: 800;
+  color: #203d5f;
+  display: inline-flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.ticketHistoryItemMeta {
+  font-size: 11px;
+  color: #58708a;
+  display: inline-flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.ticketHistoryItemDot {
+  opacity: 0.55;
+}
+
+.historicalReadOnlyHint {
+  border-top: 1px solid #d8e5f5;
+  background: #f0f6ff;
+  color: #2a4f79;
+  font-size: 12px;
+  font-weight: 600;
+  padding: 8px 12px;
+}
+
 .remindersWrap {
   position: relative;
   display: inline-flex;
@@ -892,6 +1121,12 @@
 
 .remindersToggle:active {
   transform: translateY(1px);
+}
+
+.remindersToggle:disabled {
+  opacity: 0.6;
+  cursor: not-allowed;
+  transform: none;
 }
 
 .remindersToggleIcon {
@@ -1156,7 +1391,7 @@
 
 .composerRow {
   display: grid;
-  grid-template-columns: auto 1fr auto auto;
+  grid-template-columns: auto auto 1fr auto auto;
   align-items: end;
   gap: 8px;
 }
@@ -1195,6 +1430,12 @@
 .roundButton:disabled {
   opacity: 0.5;
   cursor: not-allowed;
+}
+
+.roundButtonActive {
+  color: #0b57d0;
+  border-color: #8db2e4;
+  background: #eef5ff;
 }
 
 .roundButtonRecordActive {
@@ -1320,6 +1561,204 @@
   position: relative;
 }
 
+.quickWrap {
+  position: relative;
+}
+
+.quickPanel {
+  position: absolute;
+  bottom: 56px;
+  left: 0;
+  width: min(460px, calc(100vw - 24px));
+  max-height: min(72vh, 620px);
+  overflow: auto;
+  border: 1px solid #d0dcef;
+  background: linear-gradient(180deg, #ffffff 0%, #f7fbff 100%);
+  border-radius: 14px;
+  box-shadow: 0 20px 42px rgba(15, 23, 42, 0.24);
+  padding: 10px;
+  display: grid;
+  gap: 8px;
+  z-index: 40;
+}
+
+.quickPanelHead {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  position: sticky;
+  top: -10px;
+  padding: 2px 0 7px;
+  background: linear-gradient(180deg, #ffffff 0%, #f7fbff 100%);
+  border-bottom: 1px solid #e1ebf8;
+  z-index: 1;
+}
+
+.quickPanelTitle {
+  font-size: 12px;
+  font-weight: 800;
+  color: #1f466f;
+}
+
+.quickPanelClose {
+  width: 28px;
+  height: 28px;
+  border-radius: 8px;
+  border: 1px solid #cadbf2;
+  background: #f8fbff;
+  color: #476184;
+  font-size: 18px;
+  line-height: 1;
+  cursor: pointer;
+}
+
+.quickSearch,
+.quickInput,
+.quickTextarea {
+  width: 100%;
+  border: 1px solid #cad9ed;
+  border-radius: 10px;
+  background: #fff;
+  color: #102a43;
+  padding: 8px 10px;
+}
+
+.quickSearch:focus,
+.quickInput:focus,
+.quickTextarea:focus {
+  outline: none;
+  border-color: #8eb3e8;
+  box-shadow: 0 0 0 3px rgba(26, 115, 232, 0.14);
+}
+
+.quickSearch {
+  font-size: 12px;
+}
+
+.quickInput {
+  font-size: 12px;
+}
+
+.quickTextarea {
+  resize: vertical;
+  min-height: 62px;
+  font-size: 12px;
+}
+
+.quickForm {
+  display: grid;
+  gap: 6px;
+  padding: 8px;
+  border: 1px solid #d9e6f7;
+  border-radius: 11px;
+  background: #f8fbff;
+}
+
+.quickList {
+  display: grid;
+  gap: 8px;
+  max-height: 300px;
+  overflow: auto;
+  padding-right: 2px;
+}
+
+.quickEmpty {
+  border: 1px dashed #ccdaed;
+  border-radius: 10px;
+  padding: 10px;
+  color: #637890;
+  font-size: 12px;
+  text-align: center;
+}
+
+.quickItem {
+  border: 1px solid #d9e5f6;
+  border-radius: 11px;
+  padding: 9px;
+  background: #f9fcff;
+  display: grid;
+  gap: 7px;
+}
+
+.quickItemHead {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.quickItemTitle {
+  color: #213f61;
+  font-size: 12px;
+  font-weight: 800;
+}
+
+.quickShortcut {
+  border-radius: 999px;
+  border: 1px solid #bfd3ef;
+  background: #e8f1ff;
+  color: #0b57d0;
+  font-size: 10px;
+  font-weight: 800;
+  padding: 3px 8px;
+}
+
+.quickItemContent {
+  margin: 0;
+  color: #39506a;
+  font-size: 12px;
+  line-height: 1.35;
+  white-space: pre-wrap;
+}
+
+.quickItemActions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.quickPrimaryButton,
+.quickGhostButton,
+.quickDangerButton {
+  border: 1px solid transparent;
+  border-radius: 999px;
+  padding: 6px 10px;
+  font-size: 11px;
+  font-weight: 700;
+  cursor: pointer;
+}
+
+.quickPrimaryButton {
+  border-color: rgba(11, 87, 208, 0.45);
+  background: linear-gradient(180deg, #1a73e8 0%, #0b57d0 100%);
+  color: #fff;
+}
+
+.quickGhostButton {
+  border-color: #c9daf4;
+  background: #fff;
+  color: #21466f;
+}
+
+.quickDangerButton {
+  border-color: #f3b7be;
+  background: #fff2f4;
+  color: #b4233a;
+}
+
+.quickPrimaryButton:disabled,
+.quickGhostButton:disabled,
+.quickDangerButton:disabled {
+  opacity: 0.6;
+  cursor: not-allowed;
+}
+
+.quickEditForm {
+  display: grid;
+  gap: 6px;
+}
+
 .recordingHint {
   align-self: center;
   font-size: 12px;
@@ -1367,6 +1806,9 @@
   font-weight: 600;
   box-shadow: 0 10px 22px rgba(0, 0, 0, 0.18);
   border: 1px solid transparent;
+  display: flex;
+  align-items: center;
+  gap: 10px;
 }
 
 .toastInfo {
@@ -1391,6 +1833,34 @@
   color: #9f1239;
   background: #ffe4e9;
   border-color: #fecdd6;
+}
+
+.toastText {
+  flex: 1;
+  min-width: 0;
+}
+
+.toastAction {
+  border: 1px solid rgba(20, 60, 120, 0.28);
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.9);
+  color: #15376f;
+  font-size: 12px;
+  font-weight: 700;
+  line-height: 1;
+  padding: 7px 11px;
+  cursor: pointer;
+  white-space: nowrap;
+  transition: transform 120ms ease, filter 120ms ease;
+}
+
+.toastAction:hover {
+  filter: brightness(1.02);
+  transform: translateY(-1px);
+}
+
+.toastAction:active {
+  transform: translateY(0);
 }
 
 .pageMobile {
@@ -1542,6 +2012,14 @@
   color: #b5c9df;
 }
 
+:global(:root[data-theme='dark']) .emptyChatLoadingTitle {
+  color: #d5e6fb;
+}
+
+:global(:root[data-theme='dark']) .emptyChatLoadingSubtle {
+  color: #9eb5cd;
+}
+
 :global(:root[data-theme='dark']) .dropdownLabel,
 :global(:root[data-theme='dark']) .dropdownCaret {
   color: #a5bdd7;
@@ -1625,6 +2103,36 @@
   color: #ff9a9a;
 }
 
+:global(:root[data-theme='dark']) .toastInfo {
+  color: #c8ddff;
+  background: #1a2f49;
+  border-color: #31557f;
+}
+
+:global(:root[data-theme='dark']) .toastSuccess {
+  color: #d4ffea;
+  background: #163a31;
+  border-color: #2e6f5f;
+}
+
+:global(:root[data-theme='dark']) .toastWarning {
+  color: #ffe5b2;
+  background: #453115;
+  border-color: #7a5a2f;
+}
+
+:global(:root[data-theme='dark']) .toastError {
+  color: #ffd7df;
+  background: #4b2330;
+  border-color: #8a3950;
+}
+
+:global(:root[data-theme='dark']) .toastAction {
+  background: rgba(10, 22, 35, 0.75);
+  border-color: #3a5d86;
+  color: #cde3ff;
+}
+
 :global(:root[data-theme='dark']) .mediaMenuButton:hover {
   background: #1e3249;
 }
@@ -1633,6 +2141,12 @@
   background: #1a2d43;
   border-color: #345274;
   color: #d6e8ff;
+}
+
+:global(:root[data-theme='dark']) .roundButtonActive {
+  background: #254264;
+  border-color: #4876ab;
+  color: #d8ebff;
 }
 
 :global(:root[data-theme='dark']) .sendButton {
@@ -1651,6 +2165,127 @@
   background: #17283b;
 }
 
+:global(:root[data-theme='dark']) .ticketHistoryButton {
+  background: linear-gradient(180deg, #1b2f45 0%, #17283c 100%);
+  border-color: #355376;
+  color: #d4e6ff;
+}
+
+:global(:root[data-theme='dark']) .ticketHistoryButton:hover {
+  border-color: #446893;
+  background: linear-gradient(180deg, #213650 0%, #1a2d44 100%);
+}
+
+:global(:root[data-theme='dark']) .ticketHistoryButtonCount {
+  background: #234767;
+  border-color: #3c6691;
+  color: #cfe6ff;
+}
+
+:global(:root[data-theme='dark']) .ticketHistoryPanel {
+  background: linear-gradient(180deg, #132336 0%, #101f31 100%);
+  border-color: #2d4867;
+  box-shadow: 0 20px 44px rgba(2, 6, 23, 0.7);
+}
+
+:global(:root[data-theme='dark']) .ticketHistoryPanelHead {
+  background: linear-gradient(180deg, #132336 0%, #101f31 100%);
+  border-color: #2d4867;
+}
+
+:global(:root[data-theme='dark']) .ticketHistoryPanelTitle {
+  color: #d8e8fb;
+}
+
+:global(:root[data-theme='dark']) .ticketHistoryPanelClose {
+  background: #1a2d43;
+  border-color: #355375;
+  color: #bcd6f6;
+}
+
+:global(:root[data-theme='dark']) .ticketHistoryPanelClose:hover {
+  background: #223750;
+}
+
+:global(:root[data-theme='dark']) .ticketHistoryItem,
+:global(:root[data-theme='dark']) .ticketHistoryEmpty {
+  background: #152538;
+  border-color: #2d4867;
+  color: #d4e5fa;
+}
+
+:global(:root[data-theme='dark']) .ticketHistoryItemActive {
+  background: #1c3550;
+  border-color: #44709c;
+}
+
+:global(:root[data-theme='dark']) .ticketHistoryItemMain {
+  color: #d9ebff;
+}
+
+:global(:root[data-theme='dark']) .ticketHistoryItemMeta {
+  color: #a8c0d8;
+}
+
+:global(:root[data-theme='dark']) .historicalReadOnlyHint {
+  background: #16283c;
+  border-color: #304b68;
+  color: #c0d7ee;
+}
+
+:global(:root[data-theme='dark']) .quickPanel {
+  background: linear-gradient(180deg, #132336 0%, #101f31 100%);
+  border-color: #2d4867;
+  box-shadow: 0 20px 44px rgba(2, 6, 23, 0.7);
+}
+
+:global(:root[data-theme='dark']) .quickPanelHead {
+  background: linear-gradient(180deg, #132336 0%, #101f31 100%);
+  border-color: #2d4867;
+}
+
+:global(:root[data-theme='dark']) .quickPanelTitle {
+  color: #d8e8fb;
+}
+
+:global(:root[data-theme='dark']) .quickPanelClose {
+  background: #1a2d43;
+  border-color: #355375;
+  color: #bcd6f6;
+}
+
+:global(:root[data-theme='dark']) .quickSearch,
+:global(:root[data-theme='dark']) .quickInput,
+:global(:root[data-theme='dark']) .quickTextarea,
+:global(:root[data-theme='dark']) .quickGhostButton,
+:global(:root[data-theme='dark']) .quickItem,
+:global(:root[data-theme='dark']) .quickEmpty,
+:global(:root[data-theme='dark']) .quickForm {
+  background: #152538;
+  border-color: #2d4867;
+  color: #d4e5fa;
+}
+
+:global(:root[data-theme='dark']) .quickItemTitle {
+  color: #d9ebff;
+}
+
+:global(:root[data-theme='dark']) .quickItemContent {
+  color: #a8c0d8;
+}
+
+:global(:root[data-theme='dark']) .quickShortcut {
+  background: #234767;
+  border-color: #3c6691;
+  color: #cfe6ff;
+}
+
+:global(:root[data-theme='dark']) .quickDangerButton {
+  background: #4a2228;
+  border-color: #6e343d;
+  color: #ffd1d7;
+}
+
 :global(:root[data-theme='dark']) .remindersToggle {
   background: linear-gradient(180deg, #1b2f45 0%, #17283c 100%);
   border-color: #355376;
@@ -1660,6 +2295,10 @@
 :global(:root[data-theme='dark']) .remindersToggle:hover {
   border-color: #446893;
   background: linear-gradient(180deg, #213650 0%, #1a2d44 100%);
+}
+
+:global(:root[data-theme='dark']) .remindersToggle:disabled {
+  opacity: 0.55;
 }
 
 :global(:root[data-theme='dark']) .remindersCount {
@@ -1790,10 +2429,38 @@
 
   .chatHeader {
     padding: 10px 12px;
+    align-items: flex-start;
+    flex-wrap: wrap;
   }
 
   .chatHeaderActions {
     gap: 8px;
+    width: 100%;
+    justify-content: flex-start;
+    flex-wrap: wrap;
+  }
+
+  .ticketHistoryWrap {
+    max-width: 100%;
+  }
+
+  .ticketHistoryButton {
+    min-height: 30px;
+    padding: 0 10px;
+    font-size: 11px;
+  }
+
+  .ticketHistoryButtonCount {
+    min-width: 16px;
+    height: 16px;
+    font-size: 9px;
+    padding: 0 4px;
+  }
+
+  .ticketHistoryPanel {
+    right: 10px;
+    width: min(390px, calc(100vw - 24px));
+    max-height: min(62vh, 460px);
   }
 
   .dropdownGroup {
@@ -1801,7 +2468,12 @@
   }
 
   .composerRow {
-    grid-template-columns: auto 1fr auto auto;
+    grid-template-columns: auto auto 1fr auto auto;
+  }
+
+  .quickPanel {
+    width: min(420px, calc(100vw - 24px));
+    max-height: min(68vh, 540px);
   }
 
   .remindersForm {
@@ -1846,6 +2518,23 @@
 
   .dropdownSelect {
     padding: 6px 26px 6px 8px;
+  }
+
+  .ticketHistoryButton {
+    max-width: min(100%, 210px);
+  }
+
+  .ticketHistoryPanel {
+    right: 0;
+    left: auto;
+    width: min(360px, calc(100vw - 16px));
+  }
+
+  .quickPanel {
+    left: 0;
+    right: auto;
+    width: min(350px, calc(100vw - 16px));
+    max-height: min(66vh, 500px);
   }
 
   .remindersToggle span:nth-child(2) {

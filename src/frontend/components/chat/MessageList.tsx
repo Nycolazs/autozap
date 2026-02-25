@@ -7,6 +7,7 @@ import styles from '@/src/frontend/components/chat/chat.module.css';
 type MessageListProps = {
   ticketSelected: boolean;
   messages: ChatMessage[];
+  loading?: boolean;
   onReply: (message: ChatMessage) => void;
 };
 
@@ -383,7 +384,7 @@ function getLastMessageKey(messages: ChatMessage[]): string {
   return `${last.id}:${String(last.updated_at || last.created_at || '')}`;
 }
 
-export function MessageList({ ticketSelected, messages, onReply }: MessageListProps) {
+export function MessageList({ ticketSelected, messages, loading = false, onReply }: MessageListProps) {
   const scrollRef = useRef<HTMLDivElement | null>(null);
   const shouldStickToBottomRef = useRef(true);
   const lastMessageKeyRef = useRef('');
@@ -461,7 +462,14 @@ export function MessageList({ ticketSelected, messages, onReply }: MessageListPr
     >
       <div className={styles.messagesList}>
         {!messages.length ? (
-          <div className={styles.emptyChat}>Ainda não há mensagens nesta conversa.</div>
+          loading ? (
+            <div className={`${styles.emptyChat} ${styles.emptyChatLoading}`} aria-live="polite" aria-busy="true">
+              <div className={styles.emptyChatLoadingTitle}>Carregando conversa...</div>
+              <div className={styles.emptyChatLoadingSubtle}>Sincronizando mensagens</div>
+            </div>
+          ) : (
+            <div className={styles.emptyChat}>Ainda não há mensagens nesta conversa.</div>
+          )
         ) : null}
 
         {messages.map((message) => {

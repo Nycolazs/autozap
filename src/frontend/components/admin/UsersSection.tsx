@@ -313,7 +313,7 @@ export function UsersSection({ onToast, onAuthExpired }: UsersSectionProps) {
                       {user.isAdmin ? (
                         <button
                           type="button"
-                          className={`${styles.buttonGhost} ${styles.userActionButton} ${styles.userActionWide}`}
+                          className={`${styles.buttonDemote} ${styles.userActionButton} ${styles.userActionWide}`}
                           onClick={() => void handleRevertToSeller(user)}
                           disabled={submitting}
                         >

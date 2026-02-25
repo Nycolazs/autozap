@@ -21,6 +21,8 @@ let lastDisconnectReason = null;
 let runtimePhoneNumberId = '';
 let activeSender = null;
 let profilePictureLookupBlockedUntil = 0;
+let lastProfilePictureLookupUnsupportedAt = null;
+let lastProfilePictureLookupUnsupportedReason = null;
 
 const PROFILE_PICTURE_UNSUPPORTED_BACKOFF_MS = Math.max(
   60 * 1000,
@@ -370,6 +372,20 @@ function isUnsupportedProfilePictureLookupError(err) {
   return false;
 }
 
+function getProfilePictureLookupState() {
+  const blockedUntil = profilePictureLookupBlockedUntil > Date.now()
+    ? profilePictureLookupBlockedUntil
+    : 0;
+
+  return {
+    supported: blockedUntil === 0,
+    blockedUntil: blockedUntil || null,
+    reason: blockedUntil ? 'unsupported_operation' : null,
+    lastUnsupportedAt: lastProfilePictureLookupUnsupportedAt,
+    lastErrorMessage: lastProfilePictureLookupUnsupportedReason,
+  };
+}
+
 async function fetchContactProfilePictureUrl(phoneOrJid) {
   const phone = normalizePhone(String(phoneOrJid || '').split('@')[0]);
   if (!phone) return null;
@@ -396,6 +412,13 @@ async function fetchContactProfilePictureUrl(phoneOrJid) {
     return url || null;
   } catch (err) {
     if (isUnsupportedProfilePictureLookupError(err)) {
+      const graphErr = err && err.graphError ? err.graphError : null;
+      lastProfilePictureLookupUnsupportedAt = Date.now();
+      lastProfilePictureLookupUnsupportedReason = String(
+        (graphErr && graphErr.message)
+        || (err && err.message)
+        || 'Consulta automática de foto não suportada'
+      );
       profilePictureLookupBlockedUntil = Date.now() + PROFILE_PICTURE_UNSUPPORTED_BACKOFF_MS;
       logger.warn('[PROFILE] Consulta automática de foto não suportada nesta configuração da Cloud API.');
       return null;
@@ -1269,6 +1292,9 @@ function getSocket() {
     async profilePictureUrl(jidValue) {
       return fetchContactProfilePictureUrl(jidValue);
     },
+    profilePictureLookupState() {
+      return getProfilePictureLookupState();
+    },
     async onWhatsApp(jidValue) {
       const num = normalizePhone(String(jidValue || '').split('@')[0]);
       if (!num) return [];
@@ -1329,6 +1355,7 @@ module.exports.downloadMediaById = downloadMediaFromWhatsApp;
 module.exports.isConfigured = () => isConfigured(getConfig());
 module.exports.getConfig = getConfig;
 module.exports.getActiveSender = getActiveSender;
+module.exports.getProfilePictureLookupState = getProfilePictureLookupState;
 module.exports._debug = {
   get started() {
     return started;

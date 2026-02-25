@@ -19,7 +19,16 @@ export function ToastViewport({ toasts }: ToastViewportProps) {
     <div className={styles.toastViewport} aria-live="polite" aria-atomic="false">
       {toasts.map((toast) => (
         <div key={toast.id} className={`${styles.toastItem} ${resolveToastClass(toast.type)}`}>
-          {toast.message}
+          <span className={styles.toastText}>{toast.message}</span>
+          {toast.actionLabel && typeof toast.onAction === 'function' ? (
+            <button
+              type="button"
+              className={styles.toastAction}
+              onClick={toast.onAction}
+            >
+              {toast.actionLabel}
+            </button>
+          ) : null}
         </div>
       ))}
     </div>

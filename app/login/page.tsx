@@ -147,14 +147,14 @@ export default function LoginPage() {
                 {showPassword ? (
                   <svg
                     className={authStyles.passwordToggleIcon}
-                    viewBox="0 0 24 24"
+                    viewBox="0 0 20 20"
                     fill="none"
                     aria-hidden="true"
                   >
                     <path
-                      d="M3 4.5L20 21.5M10.75 10.32C10.26 10.71 10 11.32 10 12C10 13.1 10.9 14 12 14C12.67 14 13.28 13.73 13.68 13.25M6.72 8.22C5.36 9.2 4.3 10.53 3.62 12C5.24 15.53 8.37 18 12 18C13.42 18 14.76 17.62 15.95 16.94M9.88 6.26C10.56 6.09 11.27 6 12 6C15.63 6 18.76 8.47 20.38 12C20.04 12.73 19.62 13.42 19.13 14.05"
+                      d="M3 3L17 17M8.8 8.86C8.3 9.17 8 9.58 8 10C8 11.1 8.9 12 10 12C10.42 12 10.83 11.7 11.14 11.2M6.53 6.59C5.03 7.47 3.86 8.65 3.2 10C4.26 12.2 6.95 14 10 14C11.35 14 12.63 13.66 13.74 13.05M9.08 6.03C9.37 6.01 9.68 6 10 6C13.05 6 15.74 7.8 16.8 10C16.47 10.67 16.01 11.3 15.47 11.85"
                       stroke="currentColor"
-                      strokeWidth="1.8"
+                      strokeWidth="1.7"
                       strokeLinecap="round"
                       strokeLinejoin="round"
                     />
@@ -162,18 +162,18 @@ export default function LoginPage() {
                 ) : (
                   <svg
                     className={authStyles.passwordToggleIcon}
-                    viewBox="0 0 24 24"
+                    viewBox="0 0 20 20"
                     fill="none"
                     aria-hidden="true"
                   >
                     <path
-                      d="M2.8 12C4.48 8.52 8 6 12 6C16 6 19.52 8.52 21.2 12C19.52 15.48 16 18 12 18C8 18 4.48 15.48 2.8 12Z"
+                      d="M2.6 10C3.78 7.56 6.55 6 10 6C13.45 6 16.22 7.56 17.4 10C16.22 12.44 13.45 14 10 14C6.55 14 3.78 12.44 2.6 10Z"
                       stroke="currentColor"
-                      strokeWidth="1.8"
+                      strokeWidth="1.7"
                       strokeLinecap="round"
                       strokeLinejoin="round"
                     />
-                    <circle cx="12" cy="12" r="3" stroke="currentColor" strokeWidth="1.8" />
+                    <circle cx="10" cy="10" r="2.25" stroke="currentColor" strokeWidth="1.7" />
                   </svg>
                 )}
               </button>

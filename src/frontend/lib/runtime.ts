@@ -14,6 +14,7 @@ declare global {
 const AUTH_TOKEN_KEY = 'AUTH_TOKEN_SESSION';
 const LEGACY_AUTH_TOKEN_KEY = 'AUTH_TOKEN';
 const API_BASE_KEY = 'API_BASE';
+const API_PROXY_BASE_PARAM = '__api_base';
 
 function isBrowser(): boolean {
   return typeof window !== 'undefined';
@@ -32,7 +33,64 @@ function normalizePhoneDigits(value: unknown): string {
 function isProtectedAssetPath(pathname: string): boolean {
   const normalized = String(pathname || '');
   if (normalized.startsWith('/media/')) return true;
+  if (normalized.startsWith('/__api/media/')) return true;
   return /^\/profile-picture\/[^/]+\/image$/i.test(normalized);
+}
+
+function isProtectedProxyAssetPath(pathname: string): boolean {
+  const normalized = String(pathname || '');
+  return /^\/__api\/profile-picture\/[^/]+\/image$/i.test(normalized);
+}
+
+function shouldProxyApiBase(base: string): boolean {
+  if (!isBrowser()) return false;
+  const normalizedBase = normalizeBase(base);
+  if (!normalizedBase) return false;
+
+  const protocol = String(window.location.protocol || '').toLowerCase();
+  if (protocol !== 'http:' && protocol !== 'https:') return false;
+
+  try {
+    const currentOrigin = String(window.location.origin || '').toLowerCase();
+    const baseOrigin = String(new URL(normalizedBase).origin || '').toLowerCase();
+    return !!currentOrigin && !!baseOrigin && currentOrigin !== baseOrigin;
+  } catch (_) {
+    return false;
+  }
+}
+
+function buildProxyUrl(pathOrUrl: string, base: string): string {
+  if (!isBrowser()) return pathOrUrl;
+
+  const normalizedBase = normalizeBase(base);
+  if (!normalizedBase) return pathOrUrl;
+
+  let targetPath = '';
+  if (/^https?:\/\//i.test(pathOrUrl)) {
+    try {
+      const absolute = new URL(pathOrUrl);
+      const baseUrl = new URL(normalizedBase);
+      if (String(absolute.origin).toLowerCase() !== String(baseUrl.origin).toLowerCase()) {
+        return pathOrUrl;
+      }
+      targetPath = `${absolute.pathname || '/'}${absolute.search || ''}`;
+    } catch (_) {
+      return pathOrUrl;
+    }
+  } else {
+    const direct = String(pathOrUrl || '').trim();
+    if (!direct) return direct;
+    if (direct.startsWith('/__api/')) return direct;
+    targetPath = direct.startsWith('/') ? direct : `/${direct}`;
+  }
+
+  try {
+    const proxied = new URL(`/__api${targetPath}`, window.location.origin);
+    proxied.searchParams.set(API_PROXY_BASE_PARAM, normalizedBase);
+    return `${proxied.pathname}${proxied.search}`;
+  } catch (_) {
+    return pathOrUrl;
+  }
 }
 
 export function isCapacitorNativeRuntime(): boolean {
@@ -85,10 +143,21 @@ export function getApiBase(): string {
 
 export function resolveApiUrl(pathOrUrl: string): string {
   if (!pathOrUrl) return pathOrUrl;
-  if (/^https?:\/\//i.test(pathOrUrl)) return pathOrUrl;
+  if (pathOrUrl.startsWith('/__api/')) return pathOrUrl;
 
   const base = getApiBase();
+  const useProxy = shouldProxyApiBase(base);
+
+  if (/^https?:\/\//i.test(pathOrUrl)) {
+    return useProxy ? buildProxyUrl(pathOrUrl, base) : pathOrUrl;
+  }
+
   if (!base) return pathOrUrl;
+
+  if (useProxy) {
+    return buildProxyUrl(pathOrUrl, base);
+  }
+
   if (pathOrUrl.startsWith('/')) return `${base}${pathOrUrl}`;
   return `${base}/${pathOrUrl}`;
 }
@@ -135,7 +204,8 @@ export function resolveMediaUrl(mediaPath: string | null | undefined): string {
 
   try {
     const parsed = new URL(resolved, isBrowser() ? window.location.origin : 'http://localhost');
-    if (!isProtectedAssetPath(String(parsed.pathname || ''))) return resolved;
+    const pathname = String(parsed.pathname || '');
+    if (!isProtectedAssetPath(pathname) && !isProtectedProxyAssetPath(pathname)) return resolved;
     if (!parsed.searchParams.has('auth')) parsed.searchParams.set('auth', token);
     return parsed.toString();
   } catch (_) {
@@ -145,18 +215,22 @@ export function resolveMediaUrl(mediaPath: string | null | undefined): string {
 
 export function resolveProfilePictureUrl(phone: string | null | undefined, directUrl?: string | null): string {
   const rawDirect = String(directUrl || '').trim();
+  const normalizedPhone = normalizePhoneDigits(phone);
   if (/^(blob:|data:)/i.test(rawDirect)) return rawDirect;
+  if (/^https?:\/\//i.test(rawDirect)) {
+    if (normalizedPhone) {
+      return resolveMediaUrl(`/profile-picture/${encodeURIComponent(normalizedPhone)}/image`);
+    }
+    return resolveMediaUrl(rawDirect);
+  }
+  if (/^\/profile-picture\/[^/]+\/image(?:\?.*)?$/i.test(rawDirect)) {
+    return resolveMediaUrl(rawDirect);
+  }
   if (/^\/media\/profiles\//i.test(rawDirect)) {
     const directLocal = resolveMediaUrl(rawDirect);
     if (directLocal) return directLocal;
   }
-
-  const normalizedPhone = normalizePhoneDigits(phone);
-  if (normalizedPhone) {
-    return resolveMediaUrl(`/profile-picture/${encodeURIComponent(normalizedPhone)}/image`);
-  }
-
-  return resolveMediaUrl(rawDirect);
+  return rawDirect ? resolveMediaUrl(rawDirect) : '';
 }
 
 export async function resolveMediaObjectUrl(
@@ -179,7 +253,8 @@ export async function resolveMediaObjectUrl(
     return resolved;
   }
 
-  if (!isProtectedAssetPath(String(parsed.pathname || ''))) {
+  const pathname = String(parsed.pathname || '');
+  if (!isProtectedAssetPath(pathname) && !isProtectedProxyAssetPath(pathname)) {
     return resolved;
   }
 

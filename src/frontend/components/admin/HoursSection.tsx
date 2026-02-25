@@ -26,6 +26,31 @@ type HoursSectionProps = {
 
 const DAY_LABELS = ['Domingo', 'Segunda', 'Terca', 'Quarta', 'Quinta', 'Sexta', 'Sabado'];
 
+function normalizeBusinessTime(value: unknown, fallback = '08:00'): string {
+  const raw = String(value || '').trim();
+  if (!raw) return fallback;
+
+  const time24 = raw.match(/^([01]?\d|2[0-3]):([0-5]\d)(?::[0-5]\d)?$/);
+  if (time24) {
+    const hour = String(time24[1] || '').padStart(2, '0');
+    const minute = String(time24[2] || '').padStart(2, '0');
+    return `${hour}:${minute}`;
+  }
+
+  const time12 = raw.match(/^(\d{1,2}):([0-5]\d)(?::[0-5]\d)?\s*([AaPp][Mm])$/);
+  if (time12) {
+    const rawHour = Number(time12[1]);
+    const minute = String(time12[2] || '').padStart(2, '0');
+    const period = String(time12[3] || '').toUpperCase();
+    if (!Number.isFinite(rawHour) || rawHour < 1 || rawHour > 12) return fallback;
+    let hour = rawHour % 12;
+    if (period === 'PM') hour += 12;
+    return `${String(hour).padStart(2, '0')}:${minute}`;
+  }
+
+  return fallback;
+}
+
 function buildDefaultHours(): BusinessHour[] {
   return Array.from({ length: 7 }).map((_, day) => ({
     day,
@@ -60,8 +85,8 @@ export function HoursSection({ onToast, onAuthExpired }: HoursSectionProps) {
         if (item && Number.isInteger(item.day) && item.day >= 0 && item.day <= 6) {
           byDay[item.day] = {
             day: item.day,
-            open_time: item.open_time,
-            close_time: item.close_time,
+            open_time: normalizeBusinessTime(item.open_time, '08:00'),
+            close_time: normalizeBusinessTime(item.close_time, '18:00'),
             enabled: !!item.enabled,
           };
         }
@@ -98,7 +123,12 @@ export function HoursSection({ onToast, onAuthExpired }: HoursSectionProps) {
   const handleSaveHours = useCallback(async () => {
     setSaving(true);
     try {
-      await saveBusinessHours(hours);
+      const sanitized = hours.map((row) => ({
+        ...row,
+        open_time: normalizeBusinessTime(row.open_time, '08:00'),
+        close_time: normalizeBusinessTime(row.close_time, '18:00'),
+      }));
+      await saveBusinessHours(sanitized);
       onToast('Horarios salvos com sucesso.', 'success');
       await refresh();
     } catch (error) {
@@ -213,8 +243,8 @@ export function HoursSection({ onToast, onAuthExpired }: HoursSectionProps) {
                         <input
                           className={styles.input}
                           type="time"
-                          value={item.open_time || '08:00'}
-                          onChange={(event) => updateHour(item.day, { open_time: event.target.value })}
+                          value={normalizeBusinessTime(item.open_time, '08:00')}
+                          onChange={(event) => updateHour(item.day, { open_time: normalizeBusinessTime(event.target.value, '08:00') })}
                           disabled={!item.enabled}
                         />
                       </td>
@@ -222,8 +252,8 @@ export function HoursSection({ onToast, onAuthExpired }: HoursSectionProps) {
                         <input
                           className={styles.input}
                           type="time"
-                          value={item.close_time || '18:00'}
-                          onChange={(event) => updateHour(item.day, { close_time: event.target.value })}
+                          value={normalizeBusinessTime(item.close_time, '18:00')}
+                          onChange={(event) => updateHour(item.day, { close_time: normalizeBusinessTime(event.target.value, '18:00') })}
                           disabled={!item.enabled}
                         />
                       </td>

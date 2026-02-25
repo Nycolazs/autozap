@@ -23,6 +23,8 @@ let serverBootPromise = null;
 let runtimeConfig = null;
 let updateCheckStarted = false;
 let updateDownloadInProgress = false;
+let appIsQuitting = false;
+let windowRecoveryTimer = null;
 
 function normalizeVersion(raw) {
   return String(raw || '')
@@ -487,7 +489,31 @@ function installDesktopRuntimeHeader() {
   });
 }
 
+function scheduleMainWindowRecovery(reason) {
+  if (appIsQuitting) return;
+  if (windowRecoveryTimer) return;
+
+  console.warn(`[electron] agendando recuperação da janela (${reason})`);
+  windowRecoveryTimer = setTimeout(() => {
+    windowRecoveryTimer = null;
+    if (appIsQuitting) return;
+    if (mainWindow && !mainWindow.isDestroyed()) return;
+
+    createMainWindow().catch((err) => {
+      console.error('[electron] falha ao recriar janela principal:', err);
+      scheduleMainWindowRecovery('retry_after_failure');
+    });
+  }, 1200);
+}
+
 async function createMainWindow() {
+  if (mainWindow && !mainWindow.isDestroyed()) {
+    try {
+      mainWindow.focus();
+    } catch (_) {}
+    return;
+  }
+
   mainWindow = new BrowserWindow({
     width: 1360,
     height: 860,
@@ -517,8 +543,45 @@ async function createMainWindow() {
     mainWindow = null;
   });
 
+  mainWindow.on('unresponsive', () => {
+    console.warn('[electron] janela principal não está respondendo');
+  });
+
+  mainWindow.webContents.on('render-process-gone', (_event, details) => {
+    const reason = details && details.reason ? details.reason : 'unknown';
+    const exitCode = details && Number.isFinite(details.exitCode) ? details.exitCode : null;
+    console.error(`[electron] renderer finalizado (${reason})${exitCode != null ? ` code=${exitCode}` : ''}`);
+
+    if (!mainWindow || mainWindow.isDestroyed()) {
+      scheduleMainWindowRecovery(`render_process_gone_${reason}`);
+      return;
+    }
+
+    try {
+      mainWindow.destroy();
+    } catch (_) {}
+    mainWindow = null;
+    scheduleMainWindowRecovery(`render_process_gone_${reason}`);
+  });
+
+  mainWindow.webContents.on('did-fail-load', (_event, errorCode, errorDescription, validatedURL, isMainFrame) => {
+    if (!isMainFrame) return;
+    console.error(`[electron] falha ao carregar URL (${errorCode}) ${errorDescription} -> ${validatedURL}`);
+  });
+
   if (!runtimeConfig) {
     runtimeConfig = resolveRuntimeConfig();
+  }
+
+  const shouldClearCacheOnBoot = process.env.NODE_ENV !== 'production' || !!runtimeConfig.managedExternally;
+  if (shouldClearCacheOnBoot) {
+    try {
+      await session.defaultSession.clearCache();
+      await session.defaultSession.clearStorageData({ storages: ['cachestorage', 'serviceworkers'] });
+      console.log('[electron] cache limpo na inicialização para carregar frontend atualizado.');
+    } catch (err) {
+      console.warn('[electron] falha ao limpar cache:', err && err.message ? err.message : err);
+    }
   }
 
   await mainWindow.loadURL(`${runtimeConfig.serverUrl}/login`);
@@ -552,6 +615,14 @@ async function startDesktop() {
   }
 }
 
+process.on('uncaughtException', (err) => {
+  console.error('[electron] uncaughtException:', err);
+});
+
+process.on('unhandledRejection', (reason) => {
+  console.error('[electron] unhandledRejection:', reason);
+});
+
 app.whenReady()
   .then(startDesktop)
   .catch((err) => {
@@ -572,6 +643,11 @@ app.on('activate', async () => {
 });
 
 app.on('before-quit', () => {
+  appIsQuitting = true;
+  if (windowRecoveryTimer) {
+    clearTimeout(windowRecoveryTimer);
+    windowRecoveryTimer = null;
+  }
   if (serverHandle && typeof serverHandle.stop === 'function') {
     try {
       serverHandle.stop();

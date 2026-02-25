@@ -91,6 +91,12 @@ function createContactsRouter({
         .get(normalized);
       if (!row || !row.avatar_url) return null;
       const avatarUrl = String(row.avatar_url);
+      if (/^\/(?:__api\/)?profile-picture\/[^/]+\/image(?:\?.*)?$/i.test(avatarUrl)) {
+        try {
+          db.prepare('DELETE FROM contact_profiles WHERE phone = ?').run(normalized);
+        } catch (_) {}
+        return null;
+      }
       if (avatarUrl.startsWith('/media/profiles/') && !localProfileFileExists(avatarUrl)) {
         try {
           db.prepare('DELETE FROM contact_profiles WHERE phone = ?').run(normalized);
@@ -110,6 +116,10 @@ function createContactsRouter({
     if (!db) return;
     const normalized = normalizePhone(phone);
     if (!normalized) return;
+    const nextUrl = String(url || '').trim();
+    if (nextUrl && /^\/(?:__api\/)?profile-picture\/[^/]+\/image(?:\?.*)?$/i.test(nextUrl)) {
+      return;
+    }
     try {
       db.prepare(`
         INSERT INTO contact_profiles (phone, avatar_url, avatar_source, created_at, updated_at)
@@ -118,7 +128,7 @@ function createContactsRouter({
           avatar_url = excluded.avatar_url,
           avatar_source = excluded.avatar_source,
           updated_at = CURRENT_TIMESTAMP
-      `).run(normalized, url || null, source || null);
+      `).run(normalized, nextUrl || null, source || null);
     } catch (_) {}
   }
 
@@ -209,7 +219,7 @@ function createContactsRouter({
   async function fetchProfilePictureFromProvider(phone, persisted) {
     const key = normalizePhone(phone);
     if (!key) {
-      return { url: null, success: false };
+      return { url: null, success: false, reason: 'invalid_phone' };
     }
 
     const existing = profilePicInFlight.get(key);
@@ -226,8 +236,8 @@ function createContactsRouter({
       if (/^https?:\/\//i.test(value)) {
         const localUrl = await cacheRemoteProfilePictureLocally(key, value);
         if (localUrl) return localUrl;
-        // Fallback: mantém URL remota quando não for possível cachear localmente.
-        return value;
+        // Fallback robusto: usa endpoint autenticado para evitar CORS/assinatura expirada.
+        return `/profile-picture/${encodeURIComponent(key)}/image`;
       }
       return null;
     };
@@ -242,7 +252,7 @@ function createContactsRouter({
         }
       }
       cacheProfilePicture(key, null, PROFILE_PIC_NULL_TTL_MS);
-      return { url: null, success: false };
+      return { url: null, success: false, reason: 'provider_unavailable' };
     }
 
     const job = (async () => {
@@ -266,8 +276,18 @@ function createContactsRouter({
           }
         }
 
+        const lookupState = typeof sock.profilePictureLookupState === 'function'
+          ? sock.profilePictureLookupState()
+          : null;
         cacheProfilePicture(key, null, PROFILE_PIC_NULL_TTL_MS);
-        return { url: null, success: false };
+        if (lookupState && lookupState.supported === false) {
+          return {
+            url: null,
+            success: false,
+            reason: String(lookupState.reason || 'unsupported_by_provider'),
+          };
+        }
+        return { url: null, success: false, reason: 'not_found' };
       } catch (_) {
         if (persisted && persisted.url) {
           const normalizedPersistedUrl = await normalizeProfileUrl(persisted.url);
@@ -276,8 +296,18 @@ function createContactsRouter({
             return { url: normalizedPersistedUrl, success: true, source: persisted.source || 'db' };
           }
         }
+        const lookupState = typeof sock.profilePictureLookupState === 'function'
+          ? sock.profilePictureLookupState()
+          : null;
         cacheProfilePicture(key, null, PROFILE_PIC_NULL_TTL_MS);
-        return { url: null, success: false };
+        if (lookupState && lookupState.supported === false) {
+          return {
+            url: null,
+            success: false,
+            reason: String(lookupState.reason || 'unsupported_by_provider'),
+          };
+        }
+        return { url: null, success: false, reason: 'lookup_failed' };
       } finally {
         profilePicInFlight.delete(key);
       }
@@ -292,7 +322,7 @@ function createContactsRouter({
     const key = normalizePhone(req.params && req.params.phone);
     const forceRefresh = String((req.query && req.query.refresh) || '').trim() === '1';
     if (!key) {
-      return res.json({ url: null, fromCache: false });
+      return res.json({ url: null, fromCache: false, reason: 'invalid_phone' });
     }
 
     const now = Date.now();
@@ -307,7 +337,11 @@ function createContactsRouter({
 
     const cached = !forceRefresh ? profilePicCache.get(key) : null;
     if (cached && cached.expiresAt && cached.expiresAt > now) {
-      return res.json({ url: cached.url || null, fromCache: true });
+      return res.json({
+        url: cached.url || null,
+        fromCache: true,
+        reason: cached.url ? null : 'cached_not_available',
+      });
     }
 
     const existing = profilePicInFlight.get(key);
@@ -320,10 +354,20 @@ function createContactsRouter({
         if (fastResult && fastResult.url) {
           return res.json({ url: fastResult.url, fromCache: false, source: fastResult.source || null });
         }
-        return res.json({ url: null, fromCache: false, pending: true });
+        return res.json({
+          url: null,
+          fromCache: false,
+          pending: true,
+          reason: fastResult && fastResult.reason ? String(fastResult.reason) : null,
+        });
       }
       const result = await existing;
-      return res.json({ url: result.url || null, fromCache: false, source: result.source || null });
+      return res.json({
+        url: result.url || null,
+        fromCache: false,
+        source: result.source || null,
+        reason: result.url ? null : (result.reason ? String(result.reason) : null),
+      });
     }
 
     if (!forceRefresh) {
@@ -336,11 +380,21 @@ function createContactsRouter({
       if (fastResult && fastResult.url) {
         return res.json({ url: fastResult.url, fromCache: false, source: fastResult.source || null });
       }
-      return res.json({ url: null, fromCache: false, pending: true });
+      return res.json({
+        url: null,
+        fromCache: false,
+        pending: true,
+        reason: fastResult && fastResult.reason ? String(fastResult.reason) : null,
+      });
     }
 
     const result = await fetchProfilePictureFromProvider(key, persisted);
-    return res.json({ url: result.url || null, fromCache: false, source: result.source || null });
+    return res.json({
+      url: result.url || null,
+      fromCache: false,
+      source: result.source || null,
+      reason: result.url ? null : (result.reason ? String(result.reason) : null),
+    });
   });
 
   // Endpoint para servir foto de perfil como imagem (com fallback remoto)

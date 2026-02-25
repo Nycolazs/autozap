@@ -11,9 +11,12 @@ type ChatHeaderProps = {
   assigneeUpdating?: boolean;
   onStatusChange: (status: Ticket['status']) => void;
   onSellerChange: (sellerId: number | null) => void;
+  historyControl?: ReactNode;
   reminderControl?: ReactNode;
+  ticketNumberLabel?: string | null;
   showBackButton?: boolean;
   onBack?: () => void;
+  onAvatarError?: (phone: string) => void;
 };
 
 function statusLabel(status: Ticket['status']): string {
@@ -45,16 +48,28 @@ export function ChatHeader({
   assigneeUpdating = false,
   onStatusChange,
   onSellerChange,
+  historyControl = null,
   reminderControl = null,
+  ticketNumberLabel = null,
   showBackButton = false,
   onBack,
+  onAvatarError,
 }: ChatHeaderProps) {
   const resolvedAvatarUrl = avatarUrl || (ticket ? resolveProfilePictureUrl(ticket.phone, ticket.avatar_url || '') : '');
   const [failedAvatar, setFailedAvatar] = useState('');
+  const ticketLocked = !!ticket && (ticket.status === 'encerrado' || ticket.status === 'resolvido');
 
   useEffect(() => {
     setFailedAvatar('');
   }, [resolvedAvatarUrl, ticket?.id]);
+
+  useEffect(() => {
+    if (!failedAvatar) return;
+    const timer = window.setTimeout(() => {
+      setFailedAvatar('');
+    }, 20000);
+    return () => window.clearTimeout(timer);
+  }, [failedAvatar]);
 
   const showAvatarImage = !!resolvedAvatarUrl && failedAvatar !== resolvedAvatarUrl;
 
@@ -77,7 +92,12 @@ export function ChatHeader({
             <img
               src={resolvedAvatarUrl}
               alt=""
-              onError={() => setFailedAvatar(resolvedAvatarUrl)}
+              onError={() => {
+                setFailedAvatar(resolvedAvatarUrl);
+                if (ticket && typeof onAvatarError === 'function') {
+                  onAvatarError(ticket.phone);
+                }
+              }}
             />
           ) : (
             avatarInitials(ticket)
@@ -86,8 +106,11 @@ export function ChatHeader({
 
         {ticket ? (
           <div className={styles.chatHeaderContact}>
-            <div className={styles.chatTitle}>
-              {ticket.contact_name || ticket.phone}
+            <div className={styles.chatTitleRow}>
+              <div className={styles.chatTitle}>
+                {ticket.contact_name || ticket.phone}
+              </div>
+              {ticketNumberLabel ? <span className={styles.chatTicketBadge}>{ticketNumberLabel}</span> : null}
             </div>
             <div className={styles.chatSubTitle}>{ticket.phone}</div>
           </div>
@@ -101,6 +124,8 @@ export function ChatHeader({
 
       {ticket ? (
         <div className={styles.chatHeaderActions}>
+          {historyControl}
+
           <div className={styles.dropdownGroup}>
             <span className={styles.dropdownLabel}>Status</span>
             <div className={styles.dropdownSelectWrap}>
@@ -108,7 +133,7 @@ export function ChatHeader({
                 className={styles.dropdownSelect}
                 value={ticket.status}
                 onChange={(event) => onStatusChange(event.target.value as Ticket['status'])}
-                disabled={statusUpdating}
+                disabled={statusUpdating || ticketLocked}
               >
                 <option value="pendente">{statusLabel('pendente')}</option>
                 <option value="aguardando">{statusLabel('aguardando')}</option>
@@ -138,7 +163,7 @@ export function ChatHeader({
                     onSellerChange(sellerId);
                   }
                 }}
-                disabled={assigneeUpdating || !assignees.length}
+                disabled={assigneeUpdating || !assignees.length || ticketLocked}
               >
                 <option value="">Não atribuído</option>
                 {assignees.map((assignee) => (

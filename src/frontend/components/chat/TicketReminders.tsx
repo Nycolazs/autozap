@@ -113,6 +113,11 @@ export function TicketReminders({ ticketId, disabled, onToast, onAuthExpired }: 
     };
   }, [open]);
 
+  useEffect(() => {
+    if (!disabled) return;
+    setOpen(false);
+  }, [disabled]);
+
   const activeCount = useMemo(
     () => reminders.filter((item) => item.status === 'scheduled').length,
     [reminders]
@@ -173,9 +178,13 @@ export function TicketReminders({ ticketId, disabled, onToast, onAuthExpired }: 
       <button
         type="button"
         className={styles.remindersToggle}
-        onClick={() => setOpen((prev) => !prev)}
+        onClick={() => {
+          if (disabled) return;
+          setOpen((prev) => !prev);
+        }}
         aria-expanded={open}
         aria-haspopup="dialog"
+        disabled={disabled}
       >
         <span aria-hidden="true" className={styles.remindersToggleIcon}>⏰</span>
         <span>Agendamento</span>
@@ -256,14 +265,14 @@ export function TicketReminders({ ticketId, disabled, onToast, onAuthExpired }: 
                       <button
                         type="button"
                         onClick={() => void handleStatusChange(item, 'done')}
-                        disabled={submitting}
+                        disabled={disabled || submitting}
                       >
                         Concluir
                       </button>
                       <button
                         type="button"
                         onClick={() => void handleStatusChange(item, 'canceled')}
-                        disabled={submitting}
+                        disabled={disabled || submitting}
                       >
                         Cancelar
                       </button>
