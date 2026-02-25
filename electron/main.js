@@ -5,14 +5,15 @@ const os = require('os');
 const path = require('path');
 const http = require('http');
 const https = require('https');
+const net = require('net');
 const { Readable } = require('stream');
 const { pipeline } = require('stream/promises');
 const { app, BrowserWindow, shell, session, dialog } = require('electron');
 
 const packageJson = require(path.join(__dirname, '..', 'package.json'));
 
-const PORT = Number(process.env.PORT || 3000);
-const DEFAULT_LOCAL_SERVER_URL = `http://127.0.0.1:${PORT}`;
+const DEFAULT_LOCAL_PORT = Number(process.env.PORT || 3000);
+const DEFAULT_LOCAL_SERVER_URL = `http://127.0.0.1:${DEFAULT_LOCAL_PORT}`;
 const RUNTIME_CONFIG_PATH = path.join(__dirname, 'runtime-config.json');
 const UPDATE_CHECK_DELAY_MS = Math.max(1000, Number(process.env.AUTOZAP_UPDATE_CHECK_DELAY_MS || 10000));
 
@@ -367,6 +368,62 @@ function wait(ms) {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
+function resolveUrlPort(value) {
+  try {
+    const parsed = new URL(String(value || '').trim());
+    if (parsed.port) {
+      const direct = Number(parsed.port);
+      return Number.isFinite(direct) && direct > 0 ? direct : null;
+    }
+    return parsed.protocol === 'https:' ? 443 : 80;
+  } catch (_) {
+    return null;
+  }
+}
+
+function isPortAvailable(port, host = '127.0.0.1') {
+  return new Promise((resolve) => {
+    const tester = net.createServer();
+    tester.once('error', () => resolve(false));
+    tester.once('listening', () => {
+      tester.close(() => resolve(true));
+    });
+    tester.listen(port, host);
+  });
+}
+
+function findFreePort(host = '127.0.0.1') {
+  return new Promise((resolve) => {
+    const tester = net.createServer();
+    tester.once('error', () => resolve(null));
+    tester.once('listening', () => {
+      const address = tester.address();
+      const selectedPort = address && typeof address === 'object' ? address.port : null;
+      tester.close(() => {
+        resolve(Number.isFinite(selectedPort) && selectedPort > 0 ? selectedPort : null);
+      });
+    });
+    tester.listen(0, host);
+  });
+}
+
+async function ensureLocalRuntimePort() {
+  const preferredPort = resolveUrlPort(runtimeConfig && runtimeConfig.serverUrl)
+    || Number(process.env.PORT || DEFAULT_LOCAL_PORT)
+    || DEFAULT_LOCAL_PORT;
+
+  const preferredFree = await isPortAvailable(preferredPort);
+  const selectedPort = preferredFree ? preferredPort : await findFreePort('127.0.0.1');
+  const finalPort = Number.isFinite(selectedPort) && selectedPort > 0 ? selectedPort : preferredPort;
+
+  process.env.PORT = String(finalPort);
+  runtimeConfig.serverUrl = `http://127.0.0.1:${finalPort}`;
+
+  if (finalPort !== preferredPort) {
+    console.warn(`[electron] Porta ${preferredPort} ocupada. Usando ${finalPort} para o backend local.`);
+  }
+}
+
 function probeServer(url) {
   return new Promise((resolve) => {
     let target = null;
@@ -469,6 +526,9 @@ async function createMainWindow() {
 
 async function startDesktop() {
   runtimeConfig = resolveRuntimeConfig();
+  if (!runtimeConfig.managedExternally) {
+    await ensureLocalRuntimePort();
+  }
   console.log(`[electron] Runtime server: ${runtimeConfig.serverUrl} (${runtimeConfig.source}, managedExternally=${runtimeConfig.managedExternally})`);
   configureDesktopStorageEnv();
   installDesktopRuntimeHeader();

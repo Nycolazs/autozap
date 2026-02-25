@@ -1,6 +1,6 @@
 {
   "name": "autozap",
-  "version": "1.0.3",
+  "version": "1.0.4",
   "private": true,
   "description": "AutoZap - atendimento WhatsApp com Next.js + desktop (macOS/Windows) + Firebase + WhatsApp Cloud API",
   "author": "Nycolazs",
@@ -28,6 +28,8 @@
     "desktop:start": "npm run desktop:config:local && npm run build && cross-env NODE_ENV=production FRONTEND_REQUIRE_DESKTOP=1 electron ./electron/main.js",
     "desktop:pack": "npm run desktop:config:local && npm run build && electron-builder --dir",
     "desktop:dist:mac": "npm run desktop:config:local && npm run build && electron-builder --mac dmg zip",
+    "desktop:dist:mac:x64": "npm run desktop:config:local && npm run build && electron-builder --mac dmg zip --x64",
+    "desktop:dist:mac:universal": "npm run desktop:config:local && npm run build && electron-builder --mac dmg zip --universal",
     "desktop:dist:win": "npm run desktop:config:local && npm run build && electron-builder --win nsis zip",
     "desktop:dist:win:x64": "npm run desktop:config:local && npm run build && electron-builder --win nsis zip --x64 -c.win.signAndEditExecutable=false",
     "desktop:dist:mac:cloud": "npm run desktop:config:cloud && npm run build && electron-builder --mac dmg zip",
