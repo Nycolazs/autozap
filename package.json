@@ -1,6 +1,6 @@
 {
   "name": "autozap",
-  "version": "1.0.2",
+  "version": "1.0.3",
   "private": true,
   "description": "AutoZap - atendimento WhatsApp com Next.js + desktop (macOS/Windows) + Firebase + WhatsApp Cloud API",
   "author": "Nycolazs",

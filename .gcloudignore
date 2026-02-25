@@ -1,0 +1,27 @@
+# Keep Cloud Build source context small and backend-focused.
+.gcloudignore
+.git
+.gitignore
+.github
+
+node_modules
+.next
+dist-electron
+
+data
+media
+
+mobile-expo/node_modules
+mobile-expo/.expo
+mobile-expo/android
+mobile-expo/ios
+
+android/.gradle
+android/build
+
+functions/node_modules
+functions/.env
+
+firebase-service-account.json
+firebase-service-account.local.json
+*.log
