@@ -20,7 +20,7 @@ COPY app ./app
 COPY public ./public
 COPY src ./src
 COPY server.js ./server.js
-COPY next.config.ts ./next.config.ts
+COPY next.config.js ./next.config.js
 COPY package.json ./package.json
 COPY tsconfig.json ./tsconfig.json
 COPY next-env.d.ts ./next-env.d.ts
@@ -40,7 +40,7 @@ COPY app ./app
 COPY public ./public
 COPY src ./src
 COPY server.js ./server.js
-COPY next.config.ts ./next.config.ts
+COPY next.config.js ./next.config.js
 COPY package.json ./package.json
 
 RUN mkdir -p /home/node/.local/share/AutoZap && chown -R node:node /home/node /app

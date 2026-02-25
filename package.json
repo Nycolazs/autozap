@@ -83,7 +83,7 @@
     "files": [
       "electron/**/*",
       "server.js",
-      "next.config.ts",
+      "next.config.js",
       "app/**/*",
       ".next/**/*",
       "public/**/*",
