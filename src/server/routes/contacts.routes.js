@@ -62,6 +62,17 @@ function createContactsRouter({
     }
   }
 
+  function sendLocalProfileFile(res, url) {
+    const absolutePath = getLocalProfileAbsolutePath(url);
+    if (!absolutePath) return false;
+    try {
+      if (!fs.existsSync(absolutePath)) return false;
+      return res.sendFile(absolutePath);
+    } catch (_) {
+      return false;
+    }
+  }
+
   function cacheProfilePicture(phone, url, ttlMs) {
     if (!phone) return;
     profilePicCache.set(phone, {
@@ -213,7 +224,10 @@ function createContactsRouter({
         return localProfileFileExists(value) ? value : null;
       }
       if (/^https?:\/\//i.test(value)) {
-        return cacheRemoteProfilePictureLocally(key, value);
+        const localUrl = await cacheRemoteProfilePictureLocally(key, value);
+        if (localUrl) return localUrl;
+        // Fallback: mantém URL remota quando não for possível cachear localmente.
+        return value;
       }
       return null;
     };
@@ -327,6 +341,70 @@ function createContactsRouter({
 
     const result = await fetchProfilePictureFromProvider(key, persisted);
     return res.json({ url: result.url || null, fromCache: false, source: result.source || null });
+  });
+
+  // Endpoint para servir foto de perfil como imagem (com fallback remoto)
+  router.get('/profile-picture/:phone/image', authGuard, async (req, res) => {
+    const key = normalizePhone(req.params && req.params.phone);
+    const forceRefresh = String((req.query && req.query.refresh) || '').trim() === '1';
+    if (!key) {
+      return res.status(404).json({ error: 'Contato inválido' });
+    }
+
+    try {
+      let persisted = findPersistedProfilePicture(key);
+      let candidateUrl = persisted && persisted.url ? String(persisted.url).trim() : '';
+
+      if (!candidateUrl || forceRefresh) {
+        const fetched = await fetchProfilePictureFromProvider(key, persisted);
+        candidateUrl = String((fetched && fetched.url) || '').trim();
+      }
+
+      if (!candidateUrl) {
+        return res.status(404).json({ error: 'Foto de perfil não encontrada' });
+      }
+
+      if (candidateUrl.startsWith('/media/profiles/')) {
+        const sent = sendLocalProfileFile(res, candidateUrl);
+        if (sent) return sent;
+      }
+
+      if (/^https?:\/\//i.test(candidateUrl)) {
+        const localUrl = await cacheRemoteProfilePictureLocally(key, candidateUrl);
+        if (localUrl) {
+          const sent = sendLocalProfileFile(res, localUrl);
+          if (sent) return sent;
+        }
+
+        const request = async (headers = {}) => axios.get(candidateUrl, {
+          method: 'GET',
+          responseType: 'arraybuffer',
+          timeout: PROFILE_PIC_REMOTE_FETCH_TIMEOUT_MS,
+          headers,
+          maxRedirects: 3,
+          validateStatus: () => true,
+        });
+
+        let response = await request();
+        const waToken = readWhatsAppAccessToken();
+        if ((response.status === 401 || response.status === 403) && waToken) {
+          response = await request({ Authorization: `Bearer ${waToken}` });
+        }
+
+        if (response.status >= 200 && response.status < 300 && response.data) {
+          res.setHeader('Cache-Control', 'private, max-age=300');
+          const contentType = String((response.headers && response.headers['content-type']) || '').trim();
+          if (contentType) {
+            res.setHeader('Content-Type', contentType);
+          }
+          return res.status(200).send(Buffer.from(response.data));
+        }
+      }
+
+      return res.status(404).json({ error: 'Foto de perfil indisponível' });
+    } catch (_) {
+      return res.status(500).json({ error: 'Erro ao carregar foto de perfil' });
+    }
   });
 
   router.post('/profile-picture/:phone/upload', authGuard, (req, res, next) => {

@@ -2,6 +2,16 @@ const { extractBearerToken, verifyAuthToken } = require('../security/authToken')
 
 const tokenSecret = process.env.AUTH_TOKEN_SECRET || process.env.SESSION_SECRET || 'whatsapp-system-secret-key-fixed-2024';
 
+function extractQueryAuthToken(req) {
+  try {
+    const raw = req && req.query ? req.query.auth : '';
+    const token = String(raw || '').trim();
+    return token || null;
+  } catch (_) {
+    return null;
+  }
+}
+
 function resolveAuthIdentity(req) {
   if (req.session && req.session.userId) {
     return {
@@ -12,7 +22,15 @@ function resolveAuthIdentity(req) {
     };
   }
 
-  const token = extractBearerToken(req);
+  let token = extractBearerToken(req);
+  if (!token) {
+    token = extractQueryAuthToken(req);
+    if (token) {
+      try {
+        req.headers.authorization = `Bearer ${token}`;
+      } catch (_) {}
+    }
+  }
   if (!token) return null;
 
   const payload = verifyAuthToken(token, { secret: tokenSecret });

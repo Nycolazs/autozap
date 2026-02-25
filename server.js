@@ -311,6 +311,11 @@ async function bootstrap() {
   const cookieSecure = process.env.COOKIE_SECURE
     ? process.env.COOKIE_SECURE === '1'
     : (defaultSameSite === 'none' ? (allowInsecureCookies ? false : true) : (!dev));
+  const sessionMaxAgeDays = Number(process.env.SESSION_MAX_AGE_DAYS || 0);
+  const sessionMaxAgeMs =
+    Number.isFinite(sessionMaxAgeDays) && sessionMaxAgeDays > 0
+      ? Math.floor(sessionMaxAgeDays * 24 * 60 * 60 * 1000)
+      : null;
 
   const sessionManager = createSessionMiddleware({
     accountContext,
@@ -319,7 +324,7 @@ async function bootstrap() {
     cookie: {
       secure: cookieSecure,
       httpOnly: true,
-      maxAge: 7 * 24 * 60 * 60 * 1000,
+      ...(sessionMaxAgeMs ? { maxAge: sessionMaxAgeMs } : {}),
       sameSite: defaultSameSite,
     },
   });

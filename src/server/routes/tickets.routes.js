@@ -358,7 +358,16 @@ function createTicketsRouter({
 
     try {
       const ticket = db.prepare(
-        "SELECT t.*, s.name as seller_name FROM tickets t LEFT JOIN sellers s ON t.seller_id = s.id WHERE t.phone = ? AND t.status NOT IN ('resolvido','encerrado') ORDER BY t.id DESC LIMIT 1"
+        `SELECT t.*,
+                s.name as seller_name,
+                cp.avatar_url as avatar_url
+         FROM tickets t
+         LEFT JOIN sellers s ON t.seller_id = s.id
+         LEFT JOIN contact_profiles cp ON cp.phone = t.phone
+         WHERE t.phone = ?
+           AND t.status NOT IN ('resolvido','encerrado')
+         ORDER BY t.id DESC
+         LIMIT 1`
       ).get(phone);
       return res.json(ticket || null);
     } catch (_error) {
@@ -377,9 +386,12 @@ function createTicketsRouter({
     try {
       const tickets = db.prepare(
         `
-          SELECT t.*, s.name as seller_name
+          SELECT t.*,
+                 s.name as seller_name,
+                 cp.avatar_url as avatar_url
           FROM tickets t
           LEFT JOIN sellers s ON t.seller_id = s.id
+          LEFT JOIN contact_profiles cp ON cp.phone = t.phone
           WHERE t.phone = ?
           ORDER BY t.id DESC
           LIMIT ? OFFSET ?
@@ -398,8 +410,10 @@ function createTicketsRouter({
 
     const tickets = db.prepare(`
       SELECT
-        t.*
+        t.*,
+        cp.avatar_url as avatar_url
       FROM tickets t
+      LEFT JOIN contact_profiles cp ON cp.phone = t.phone
       WHERE (
         t.phone IS NOT NULL
         AND t.phone != ''
@@ -419,9 +433,12 @@ function createTicketsRouter({
     const { id } = req.params;
     try {
       const ticket = db.prepare(
-        `SELECT t.*, s.name as seller_name
+        `SELECT t.*,
+                s.name as seller_name,
+                cp.avatar_url as avatar_url
          FROM tickets t
          LEFT JOIN sellers s ON t.seller_id = s.id
+         LEFT JOIN contact_profiles cp ON cp.phone = t.phone
          WHERE t.id = ?`
       ).get(id);
 
@@ -1414,9 +1431,11 @@ function createTicketsRouter({
     try {
       const tickets = db.prepare(`
         SELECT t.*,
-               s.name as seller_name
+               s.name as seller_name,
+               cp.avatar_url as avatar_url
         FROM tickets t
         LEFT JOIN sellers s ON t.seller_id = s.id
+        LEFT JOIN contact_profiles cp ON cp.phone = t.phone
         WHERE (t.seller_id = ? OR t.seller_id IS NULL OR t.status = 'aguardando')
           ${includeClosed ? '' : "AND t.status != 'resolvido' AND t.status != 'encerrado'"}
           AND (
@@ -1445,9 +1464,11 @@ function createTicketsRouter({
 
       const tickets = db.prepare(`
         SELECT t.*,
-               s.name as seller_name
+               s.name as seller_name,
+               cp.avatar_url as avatar_url
         FROM tickets t
         LEFT JOIN sellers s ON t.seller_id = s.id
+        LEFT JOIN contact_profiles cp ON cp.phone = t.phone
         ${includeAll ? '' : "WHERE (t.phone IS NOT NULL AND t.phone != '' AND t.phone NOT LIKE '%@%' AND t.phone NOT GLOB '*[^0-9]*' AND length(t.phone) BETWEEN 8 AND 25)"}
         ORDER BY t.updated_at DESC
         LIMIT ? OFFSET ?
