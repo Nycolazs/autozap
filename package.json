@@ -25,6 +25,7 @@
     "desktop:config:local": "node ./scripts/write-runtime-config.js --mode=local",
     "desktop:config:cloud": "node ./scripts/write-runtime-config.js --mode=cloud",
     "desktop:dev": "cross-env AUTOZAP_SERVER_URL=http://127.0.0.1:3000 AUTOZAP_SERVER_MANAGED_EXTERNALLY=1 concurrently -k \"npm run dev\" \"wait-on tcp:3000 && electron ./electron/main.js\"",
+    "desktop:dev:proton": "cross-env NEXT_PUBLIC_API_BASE=https://autozap-api-7hf5lkloja-uc.a.run.app NEXT_PUBLIC_API_BASE_FORCE=1 AUTOZAP_SERVER_URL=http://127.0.0.1:3000 AUTOZAP_SERVER_MANAGED_EXTERNALLY=1 concurrently -k \"npm run dev\" \"wait-on tcp:3000 && electron ./electron/main.js\"",
     "desktop:start": "npm run desktop:config:local && npm run build && cross-env NODE_ENV=production FRONTEND_REQUIRE_DESKTOP=1 electron ./electron/main.js",
     "desktop:pack": "npm run desktop:config:local && npm run build && electron-builder --dir",
     "desktop:dist:mac": "npm run desktop:config:local && npm run build && electron-builder --mac dmg zip",
