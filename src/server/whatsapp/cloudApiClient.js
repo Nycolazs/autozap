@@ -616,6 +616,15 @@ function getWelcomeMessage() {
   }
 }
 
+function isWelcomeMessageEnabled() {
+  try {
+    const row = db.prepare('SELECT value FROM settings WHERE key = ?').get('welcome_message_enabled');
+    return row ? row.value !== '0' : true;
+  } catch (_) {
+    return true;
+  }
+}
+
 function shouldSendWelcomeMessage(ticketId) {
   try {
     const row = db
@@ -884,7 +893,7 @@ async function processInboundMessage(msg, value) {
     } catch (_) {}
   }
 
-  if (!isBlacklistedForAutoMessages && businessStatus.isOpen && shouldSendWelcomeMessage(ticket.id)) {
+  if (!isBlacklistedForAutoMessages && businessStatus.isOpen && isWelcomeMessageEnabled() && shouldSendWelcomeMessage(ticket.id)) {
     const welcomeMessage = getWelcomeMessage();
     if (welcomeMessage) {
       sendTextMessage(phoneNumber, welcomeMessage)

@@ -1,7 +1,7 @@
 'use client';
 
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { useRouter } from 'next/navigation';
+import { useRouter, useSearchParams } from 'next/navigation';
 import {
   assignTicket,
   createQuickMessage,
@@ -9,6 +9,7 @@ import {
   fetchProfilePicture,
   getAuthSession,
   getConnectionStatus,
+  getTicketById,
   getTicketMessages,
   listContactTickets,
   listDueReminders,
@@ -145,10 +146,85 @@ function sameQuickMessageSnapshot(current: QuickMessage[], next: QuickMessage[])
   return true;
 }
 
+const QUICK_MESSAGES_STORAGE_PREFIX = 'AUTOZAP_QUICK_MESSAGES_V1';
+
+function normalizeQuickShortcutValue(value: unknown): string | null {
+  const raw = String(value || '').trim();
+  if (!raw) return null;
+  const normalized = raw
+    .replace(/\s+/g, '')
+    .replace(/[^a-zA-Z0-9_-]/g, '')
+    .slice(0, 24)
+    .toLowerCase();
+  return normalized || null;
+}
+
+function quickMessagesStorageKey(session: AuthSession | null): string {
+  if (!session) return `${QUICK_MESSAGES_STORAGE_PREFIX}:guest`;
+  return `${QUICK_MESSAGES_STORAGE_PREFIX}:${session.userType}:${session.userId}`;
+}
+
+function readLocalQuickMessages(session: AuthSession | null): QuickMessage[] {
+  if (typeof window === 'undefined') return [];
+
+  try {
+    const raw = localStorage.getItem(quickMessagesStorageKey(session));
+    if (!raw) return [];
+
+    const parsed = JSON.parse(raw);
+    if (!Array.isArray(parsed)) return [];
+
+    const fallbackUserId = Number(session?.userId || 0);
+    const fallbackUserType = session?.userType === 'admin' ? 'admin' : 'seller';
+    const normalized: QuickMessage[] = [];
+
+    for (const row of parsed) {
+      const id = Number(row && row.id);
+      const title = String((row && row.title) || '').trim();
+      const content = String((row && row.content) || '').trim();
+      if (!Number.isFinite(id) || id <= 0 || !title || !content) continue;
+
+      const shortcut = normalizeQuickShortcutValue(row && row.shortcut);
+      const userType = row && row.user_type === 'admin'
+        ? 'admin'
+        : row && row.user_type === 'seller'
+          ? 'seller'
+          : fallbackUserType;
+      const userId = Number((row && row.user_id) || fallbackUserId) || fallbackUserId;
+      const createdAt = String((row && row.created_at) || '') || new Date().toISOString();
+      const updatedAt = String((row && row.updated_at) || createdAt) || createdAt;
+
+      normalized.push({
+        id,
+        user_id: userId,
+        user_type: userType,
+        shortcut,
+        title,
+        content,
+        created_at: createdAt,
+        updated_at: updatedAt,
+      });
+    }
+
+    return normalized;
+  } catch (_) {
+    return [];
+  }
+}
+
+function writeLocalQuickMessages(session: AuthSession | null, rows: QuickMessage[]): void {
+  if (typeof window === 'undefined') return;
+  try {
+    localStorage.setItem(quickMessagesStorageKey(session), JSON.stringify(rows));
+  } catch (_) {}
+}
+
 function getSafeApiMessage(error: unknown, fallback: string): string {
   if (error instanceof ApiRequestError) {
     const message = String(error.message || '').trim();
-    return message || fallback;
+    if (!message) return fallback;
+    if (/^HTTP\s+\d{3}$/i.test(message)) return fallback;
+    return message;
   }
   return fallback;
 }
@@ -167,6 +243,7 @@ function sameTicketRecord(a: Ticket | null, b: Ticket | null): boolean {
 
 export default function AgentPage() {
   const router = useRouter();
+  const searchParams = useSearchParams();
   const { toasts, push: pushToast } = useToast();
 
   const [session, setSession] = useState<AuthSession | null>(null);
@@ -197,10 +274,26 @@ export default function AgentPage() {
   const avatarLookupAtRef = useRef<Record<string, number>>({});
   const avatarInFlightRef = useRef<Record<string, Promise<void>>>({});
   const avatarUnavailableUntilRef = useRef<Record<string, number>>({});
+  const quickMessagesModeRef = useRef<'remote' | 'local'>('remote');
+  const quickMessagesRouteMissingRef = useRef(false);
+  const quickMessagesFallbackWarnedRef = useRef(false);
   const remindedIdsRef = useRef<Record<number, true>>({});
   const selectedTicketIdRef = useRef<number | null>(null);
   const messagesByTicketRef = useRef<Record<number, ChatMessage[]>>({});
   const latestMessagesRequestByTicketRef = useRef<Record<number, number>>({});
+  const deepLinkHandledRef = useRef(false);
+
+  const queryTicketId = useMemo(() => {
+    const raw = String(searchParams.get('ticketId') || searchParams.get('ticket') || '').trim();
+    const parsed = Number(raw);
+    if (!Number.isFinite(parsed) || parsed <= 0) return null;
+    return parsed;
+  }, [searchParams]);
+
+  const queryIncludeClosed = useMemo(() => {
+    const raw = String(searchParams.get('includeClosed') || '').trim().toLowerCase();
+    return raw === '1' || raw === 'true' || raw === 'yes';
+  }, [searchParams]);
 
   const activeTicket = useMemo(() => {
     if (!selectedTicketId) return null;
@@ -681,6 +774,135 @@ export default function AgentPage() {
     }
   }, [focusReminderConversation, handleAuthExpired, isPageVisible, pushToast, session]);
 
+  const switchQuickMessagesToLocalMode = useCallback((notify: boolean) => {
+    quickMessagesModeRef.current = 'local';
+    quickMessagesRouteMissingRef.current = true;
+    const localRows = sortQuickMessagesByNewest(readLocalQuickMessages(session));
+    setQuickMessages((current) => (sameQuickMessageSnapshot(current, localRows) ? current : localRows));
+
+    if (notify && !quickMessagesFallbackWarnedRef.current) {
+      quickMessagesFallbackWarnedRef.current = true;
+      showToast('Mensagens rápidas foram ativadas no modo local neste frontend.', 'warning');
+    }
+  }, [session, showToast]);
+
+  const createQuickMessageLocal = useCallback(async (
+    payload: { title: string; content: string; shortcut?: string | null }
+  ) => {
+    if (!session) throw new Error('Sessão indisponível.');
+
+    const title = String(payload.title || '').trim();
+    const content = String(payload.content || '').trim();
+    const shortcut = normalizeQuickShortcutValue(payload.shortcut);
+    if (!title || !content) {
+      showToast('Título e mensagem são obrigatórios.', 'error');
+      throw new Error('Invalid payload');
+    }
+
+    if (shortcut) {
+      const conflict = quickMessages.some((item) => normalizeQuickShortcutValue(item.shortcut) === shortcut);
+      if (conflict) {
+        showToast('Já existe uma mensagem rápida com esse atalho.', 'error');
+        throw new Error('Shortcut conflict');
+      }
+    }
+
+    const nowIso = new Date().toISOString();
+    let nextId = Date.now();
+    for (const item of quickMessages) {
+      const id = Number(item.id || 0);
+      if (id >= nextId) nextId = id + 1;
+    }
+
+    const created: QuickMessage = {
+      id: nextId,
+      user_id: session.userId,
+      user_type: session.userType,
+      shortcut,
+      title,
+      content,
+      created_at: nowIso,
+      updated_at: nowIso,
+    };
+
+    const nextRows = sortQuickMessagesByNewest([created, ...quickMessages.filter((item) => Number(item.id) !== Number(created.id))]);
+    writeLocalQuickMessages(session, nextRows);
+    setQuickMessages(nextRows);
+    showToast('Mensagem rápida criada.', 'success');
+  }, [quickMessages, session, showToast]);
+
+  const updateQuickMessageLocal = useCallback(async (
+    quickMessageId: number,
+    payload: { title?: string; content?: string; shortcut?: string | null }
+  ) => {
+    if (!session) throw new Error('Sessão indisponível.');
+
+    const current = quickMessages.find((item) => Number(item.id) === Number(quickMessageId));
+    if (!current) {
+      showToast('Mensagem rápida não encontrada.', 'error');
+      throw new Error('Quick message not found');
+    }
+
+    const nextTitle = Object.prototype.hasOwnProperty.call(payload, 'title')
+      ? String(payload.title || '').trim()
+      : String(current.title || '').trim();
+    const nextContent = Object.prototype.hasOwnProperty.call(payload, 'content')
+      ? String(payload.content || '').trim()
+      : String(current.content || '').trim();
+    const nextShortcut = Object.prototype.hasOwnProperty.call(payload, 'shortcut')
+      ? normalizeQuickShortcutValue(payload.shortcut)
+      : normalizeQuickShortcutValue(current.shortcut);
+
+    if (!nextTitle || !nextContent) {
+      showToast('Título e mensagem são obrigatórios.', 'error');
+      throw new Error('Invalid payload');
+    }
+
+    if (nextShortcut) {
+      const conflict = quickMessages.some((item) => (
+        Number(item.id) !== Number(quickMessageId)
+        && normalizeQuickShortcutValue(item.shortcut) === nextShortcut
+      ));
+      if (conflict) {
+        showToast('Já existe uma mensagem rápida com esse atalho.', 'error');
+        throw new Error('Shortcut conflict');
+      }
+    }
+
+    const nowIso = new Date().toISOString();
+    const nextRows = sortQuickMessagesByNewest(
+      quickMessages.map((item) => {
+        if (Number(item.id) !== Number(quickMessageId)) return item;
+        return {
+          ...item,
+          title: nextTitle,
+          content: nextContent,
+          shortcut: nextShortcut,
+          updated_at: nowIso,
+        };
+      })
+    );
+
+    writeLocalQuickMessages(session, nextRows);
+    setQuickMessages(nextRows);
+    showToast('Mensagem rápida atualizada.', 'success');
+  }, [quickMessages, session, showToast]);
+
+  const deleteQuickMessageLocal = useCallback(async (quickMessageId: number) => {
+    if (!session) throw new Error('Sessão indisponível.');
+
+    const exists = quickMessages.some((item) => Number(item.id) === Number(quickMessageId));
+    if (!exists) {
+      showToast('Mensagem rápida não encontrada.', 'error');
+      throw new Error('Quick message not found');
+    }
+
+    const nextRows = quickMessages.filter((item) => Number(item.id) !== Number(quickMessageId));
+    writeLocalQuickMessages(session, nextRows);
+    setQuickMessages(nextRows);
+    showToast('Mensagem rápida removida.', 'success');
+  }, [quickMessages, session, showToast]);
+
   const loadQuickMessageLibrary = useCallback(async (silent = true) => {
     if (!session) return;
 
@@ -689,7 +911,14 @@ export default function AgentPage() {
       const rows = await listQuickMessages();
       const normalized = sortQuickMessagesByNewest(Array.isArray(rows) ? rows : []);
       setQuickMessages((current) => (sameQuickMessageSnapshot(current, normalized) ? current : normalized));
+      quickMessagesModeRef.current = 'remote';
+      quickMessagesRouteMissingRef.current = false;
+      quickMessagesFallbackWarnedRef.current = false;
     } catch (error) {
+      if (error instanceof ApiRequestError && error.status === 404) {
+        switchQuickMessagesToLocalMode(!silent);
+        return;
+      }
       if (error instanceof ApiRequestError && error.status === 401) {
         handleAuthExpired();
         return;
@@ -700,14 +929,24 @@ export default function AgentPage() {
     } finally {
       if (!silent) setQuickMessagesLoading(false);
     }
-  }, [handleAuthExpired, session, showToast]);
+  }, [handleAuthExpired, session, showToast, switchQuickMessagesToLocalMode]);
 
   const handleCreateQuickMessage = useCallback(async (payload: { title: string; content: string; shortcut?: string | null }) => {
+    if (quickMessagesModeRef.current === 'local' || quickMessagesRouteMissingRef.current) {
+      await createQuickMessageLocal(payload);
+      return;
+    }
+
     try {
       const created = await createQuickMessage(payload);
       setQuickMessages((current) => sortQuickMessagesByNewest([created, ...current.filter((item) => Number(item.id) !== Number(created.id))]));
       showToast('Mensagem rápida criada.', 'success');
     } catch (error) {
+      if (error instanceof ApiRequestError && error.status === 404) {
+        switchQuickMessagesToLocalMode(true);
+        await createQuickMessageLocal(payload);
+        return;
+      }
       if (error instanceof ApiRequestError && error.status === 401) {
         handleAuthExpired();
       } else {
@@ -715,12 +954,17 @@ export default function AgentPage() {
       }
       throw error;
     }
-  }, [handleAuthExpired, showToast]);
+  }, [createQuickMessageLocal, handleAuthExpired, showToast, switchQuickMessagesToLocalMode]);
 
   const handleUpdateQuickMessage = useCallback(async (
     quickMessageId: number,
     payload: { title?: string; content?: string; shortcut?: string | null }
   ) => {
+    if (quickMessagesModeRef.current === 'local' || quickMessagesRouteMissingRef.current) {
+      await updateQuickMessageLocal(quickMessageId, payload);
+      return;
+    }
+
     try {
       const updated = await updateQuickMessage(quickMessageId, payload);
       setQuickMessages((current) => sortQuickMessagesByNewest(current.map((item) => (
@@ -728,6 +972,11 @@ export default function AgentPage() {
       ))));
       showToast('Mensagem rápida atualizada.', 'success');
     } catch (error) {
+      if (error instanceof ApiRequestError && error.status === 404) {
+        switchQuickMessagesToLocalMode(true);
+        await updateQuickMessageLocal(quickMessageId, payload);
+        return;
+      }
       if (error instanceof ApiRequestError && error.status === 401) {
         handleAuthExpired();
       } else {
@@ -735,14 +984,24 @@ export default function AgentPage() {
       }
       throw error;
     }
-  }, [handleAuthExpired, showToast]);
+  }, [handleAuthExpired, showToast, switchQuickMessagesToLocalMode, updateQuickMessageLocal]);
 
   const handleDeleteQuickMessage = useCallback(async (quickMessageId: number) => {
+    if (quickMessagesModeRef.current === 'local' || quickMessagesRouteMissingRef.current) {
+      await deleteQuickMessageLocal(quickMessageId);
+      return;
+    }
+
     try {
       await deleteQuickMessage(quickMessageId);
       setQuickMessages((current) => current.filter((item) => Number(item.id) !== Number(quickMessageId)));
       showToast('Mensagem rápida removida.', 'success');
     } catch (error) {
+      if (error instanceof ApiRequestError && error.status === 404) {
+        switchQuickMessagesToLocalMode(true);
+        await deleteQuickMessageLocal(quickMessageId);
+        return;
+      }
       if (error instanceof ApiRequestError && error.status === 401) {
         handleAuthExpired();
       } else {
@@ -750,7 +1009,49 @@ export default function AgentPage() {
       }
       throw error;
     }
-  }, [handleAuthExpired, showToast]);
+  }, [deleteQuickMessageLocal, handleAuthExpired, showToast, switchQuickMessagesToLocalMode]);
+
+  useEffect(() => {
+    if (!queryIncludeClosed) return;
+    setIncludeClosed(true);
+  }, [queryIncludeClosed]);
+
+  useEffect(() => {
+    if (!queryTicketId || deepLinkHandledRef.current) return;
+    if (!session) return;
+
+    const applyTarget = (targetTicket: Ticket, useOverride: boolean) => {
+      setSelectedTicketId(targetTicket.id);
+      setSelectedTicketOverride(useOverride ? targetTicket : null);
+      setReplyTo(null);
+      if (isMobileLayout) {
+        setMobilePane('chat');
+      }
+      deepLinkHandledRef.current = true;
+      router.replace('/agent');
+    };
+
+    const inMemory = tickets.find((item) => Number(item.id) === Number(queryTicketId));
+    if (inMemory) {
+      applyTarget(inMemory, false);
+      return;
+    }
+
+    let active = true;
+    void (async () => {
+      try {
+        const fetched = await getTicketById(queryTicketId);
+        if (!active || !fetched || Number(fetched.id) !== Number(queryTicketId)) return;
+        applyTarget(fetched, true);
+      } catch (_) {
+        // Se não existir, mantém lista atual sem quebrar navegação.
+      }
+    })();
+
+    return () => {
+      active = false;
+    };
+  }, [isMobileLayout, queryTicketId, router, session, tickets]);
 
   useEffect(() => {
     void loadSession();

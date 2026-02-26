@@ -13,6 +13,7 @@ import type {
   BusinessHour,
 } from '@/src/frontend/types/admin';
 import styles from '@/src/frontend/components/admin/admin.module.css';
+import { AdminDateField } from '@/src/frontend/components/admin/AdminDateField';
 import {
   formatDateOnly,
   getErrorMessage,
@@ -277,8 +278,7 @@ export function HoursSection({ onToast, onAuthExpired }: HoursSectionProps) {
         <div className={styles.cardBody}>
           <form className={styles.row} onSubmit={handleAddException}>
             <div className={styles.col4}>
-              <label className={styles.label}>Data</label>
-              <input className={styles.input} type="date" value={newExceptionDate} onChange={(event) => setNewExceptionDate(event.target.value)} />
+              <AdminDateField label="Data" value={newExceptionDate} onChange={setNewExceptionDate} />
             </div>
             <div className={styles.col6}>
               <label className={styles.label}>Motivo</label>

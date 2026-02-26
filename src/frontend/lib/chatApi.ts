@@ -107,6 +107,13 @@ export function getTicketMessages(ticketId: number, limit = 250): Promise<ChatMe
   );
 }
 
+export function getTicketById(ticketId: number): Promise<Ticket> {
+  return requestJson<Ticket>(
+    `/tickets/${encodeURIComponent(ticketId)}`,
+    { method: 'GET' }
+  );
+}
+
 export function listContactTickets(phone: string, limit = 100): Promise<Ticket[]> {
   const normalized = String(phone || '').split('@')[0].replace(/\D/g, '');
   return requestJson<Ticket[]>(

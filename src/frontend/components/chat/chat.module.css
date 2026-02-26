@@ -212,22 +212,44 @@
 
 .ticketMain {
   min-width: 0;
+  display: grid;
+  gap: 6px;
+}
+
+.ticketHeading {
+  min-width: 0;
+  display: flex;
+  align-items: baseline;
+  gap: 11px;
 }
 
 .ticketName {
+  min-width: 0;
   font-size: 14px;
   font-weight: 600;
   color: var(--az-text);
-  margin-bottom: 2px;
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
 }
 
-.ticketPhone {
-  font-size: 11px;
+.ticketPhoneDivider {
   color: var(--az-muted);
-  margin-bottom: 6px;
+  font-size: 11px;
+  opacity: 0.78;
+  flex-shrink: 0;
+  margin-left: 1px;
+  margin-right: -1px;
+}
+
+.ticketPhone {
+  font-size: 12px;
+  color: var(--az-muted);
+  font-weight: 500;
+  letter-spacing: 0.012em;
+  white-space: nowrap;
+  opacity: 0.95;
+  flex-shrink: 0;
 }
 
 .ticketMeta {
@@ -276,6 +298,19 @@
 }
 
 .ticketTime {
+  font-size: 11px;
+  color: var(--az-muted);
+  white-space: nowrap;
+}
+
+.ticketDateTime {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  flex-shrink: 0;
+}
+
+.ticketDate {
   font-size: 11px;
   color: var(--az-muted);
   white-space: nowrap;
@@ -591,6 +626,8 @@
 .messageBubbleMedia {
   padding: 6px 6px 4px;
   gap: 6px;
+  width: fit-content;
+  max-inline-size: min(100%, 332px);
 }
 
 .bubbleClient {
@@ -619,6 +656,11 @@
 .messageAgent .messageBubble {
   margin-left: auto;
   max-inline-size: min(100%, 74vw, 680px);
+}
+
+.messageClient .messageBubble.messageBubbleMedia,
+.messageAgent .messageBubble.messageBubbleMedia {
+  max-inline-size: min(100%, 332px);
 }
 
 .messageSystem .messageBubble {
@@ -660,7 +702,7 @@
 .messageImage {
   display: block;
   width: auto;
-  max-width: min(100%, 320px);
+  max-width: 320px;
   height: auto;
   max-height: 380px;
   object-fit: contain;
@@ -793,7 +835,7 @@
 }
 
 .messageBubbleMedia .messageFooter {
-  width: 100%;
+  width: auto;
   padding-left: 4px;
   padding-right: 4px;
 }
@@ -1451,10 +1493,27 @@
   color: #fff;
   font-weight: 700;
   height: 44px;
-  padding: 0 19px;
+  padding: 0 26px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 14px;
   cursor: pointer;
   box-shadow: 0 8px 18px rgba(11, 87, 208, 0.28);
   transition: transform 120ms ease, filter 140ms ease;
+}
+
+.sendButtonIcon {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 18px;
+  line-height: 1;
+  margin-left: 1px;
+}
+
+.sendButtonText {
+  letter-spacing: 0.01em;
 }
 
 .sendButton:hover {
@@ -1642,7 +1701,8 @@
 
 .quickTextarea {
   resize: vertical;
-  min-height: 62px;
+  min-height: 44px;
+  max-height: 110px;
   font-size: 12px;
 }
 
@@ -1653,6 +1713,18 @@
   border: 1px solid #d9e6f7;
   border-radius: 11px;
   background: #f8fbff;
+}
+
+.quickEditHint {
+  font-size: 11px;
+  font-weight: 700;
+  color: #345576;
+}
+
+.quickFormActions {
+  display: flex;
+  align-items: center;
+  gap: 6px;
 }
 
 .quickList {
@@ -1678,7 +1750,34 @@
   padding: 9px;
   background: #f9fcff;
   display: grid;
-  gap: 7px;
+  gap: 6px;
+}
+
+.quickItemClickable {
+  cursor: pointer;
+  transition: border-color 120ms ease, background 120ms ease;
+}
+
+.quickItemClickable:hover {
+  border-color: #bcd2ed;
+  background: #f2f8ff;
+}
+
+.quickItemPick {
+  border: none;
+  background: transparent;
+  margin: 0;
+  padding: 0;
+  width: 100%;
+  text-align: left;
+  color: #39506a;
+  font-size: 12px;
+  line-height: 1.35;
+  white-space: normal;
+  display: -webkit-box;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 3;
+  overflow: hidden;
 }
 
 .quickItemHead {
@@ -1716,6 +1815,7 @@
   display: flex;
   flex-wrap: wrap;
   gap: 6px;
+  justify-content: flex-end;
 }
 
 .quickPrimaryButton,
@@ -1741,6 +1841,21 @@
   color: #21466f;
 }
 
+.quickDeleteIconButton {
+  border: 1px solid #f3b7be;
+  background: #fff1f3;
+  color: #ba233e;
+  width: 34px;
+  height: 34px;
+  border-radius: 10px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 14px;
+  line-height: 1;
+  cursor: pointer;
+}
+
 .quickDangerButton {
   border-color: #f3b7be;
   background: #fff2f4;
@@ -1750,6 +1865,11 @@
 .quickPrimaryButton:disabled,
 .quickGhostButton:disabled,
 .quickDangerButton:disabled {
+  opacity: 0.6;
+  cursor: not-allowed;
+}
+
+.quickDeleteIconButton:disabled {
   opacity: 0.6;
   cursor: not-allowed;
 }
@@ -1785,6 +1905,10 @@
   display: flex;
   align-items: center;
   justify-content: center;
+  background:
+    radial-gradient(circle at 10% -8%, rgba(26, 115, 232, 0.12), transparent 34%),
+    radial-gradient(circle at 88% 108%, rgba(56, 124, 225, 0.12), transparent 36%),
+    var(--app-bg);
   color: #64748b;
 }
 
@@ -1927,6 +2051,14 @@
   --az-bubble-agent: #203754;
   --az-system: #1c2d42;
   background: linear-gradient(180deg, #0a1320 0%, #0d1826 100%);
+}
+
+:global(:root[data-theme='dark']) .loadingWrap {
+  background:
+    radial-gradient(circle at 10% -8%, rgba(77, 153, 255, 0.17), transparent 34%),
+    radial-gradient(circle at 88% 108%, rgba(46, 102, 189, 0.2), transparent 36%),
+    #0a1320;
+  color: #9eb3cc;
 }
 
 :global(:root[data-theme='dark']) .sidebar,
@@ -2266,6 +2398,19 @@
   color: #d4e5fa;
 }
 
+:global(:root[data-theme='dark']) .quickEditHint {
+  color: #b4cbe4;
+}
+
+:global(:root[data-theme='dark']) .quickItemPick {
+  color: #a8c0d8;
+}
+
+:global(:root[data-theme='dark']) .quickItemClickable:hover {
+  border-color: #3b5f83;
+  background: #1a3046;
+}
+
 :global(:root[data-theme='dark']) .quickItemTitle {
   color: #d9ebff;
 }
@@ -2281,6 +2426,12 @@
 }
 
 :global(:root[data-theme='dark']) .quickDangerButton {
+  background: #4a2228;
+  border-color: #6e343d;
+  color: #ffd1d7;
+}
+
+:global(:root[data-theme='dark']) .quickDeleteIconButton {
   background: #4a2228;
   border-color: #6e343d;
   color: #ffd1d7;
@@ -2405,12 +2556,24 @@
     max-inline-size: min(100%, 82vw, 420px);
   }
 
+  .messageClient .messageBubble.messageBubbleMedia,
+  .messageAgent .messageBubble.messageBubbleMedia,
+  .messageBubbleMedia {
+    max-inline-size: min(100%, 332px);
+  }
+
   .messageSystem .messageBubble {
     max-inline-size: min(100%, 90vw, 420px);
   }
 
   .messageImage {
-    max-width: min(100%, 280px);
+    width: auto;
+    max-width: 280px;
+  }
+
+  .messageBubbleMedia .messageFooter {
+    width: fit-content;
+    max-width: fit-content;
   }
 
   .messageSticker {

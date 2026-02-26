@@ -2,7 +2,9 @@ import { useCallback, useEffect, useMemo, useState } from 'react';
 import { getRanking } from '@/src/frontend/lib/adminApi';
 import type { RankingSeller } from '@/src/frontend/types/admin';
 import styles from '@/src/frontend/components/admin/admin.module.css';
+import { AdminDateField } from '@/src/frontend/components/admin/AdminDateField';
 import {
+  formatIsoDateBr,
   getErrorMessage,
   isUnauthorized,
   toIsoDateInput,
@@ -74,13 +76,17 @@ export function RankingSection({ onToast, onAuthExpired }: RankingSectionProps) 
       <div className={styles.cardBody}>
         <div className={styles.row} style={{ marginBottom: 12 }}>
           <div className={styles.col4}>
-            <label className={styles.label}>Data inicial</label>
-            <input className={styles.input} type="date" value={startDate} onChange={(event) => setStartDate(event.target.value)} />
+            <AdminDateField label="Data inicial" value={startDate} onChange={setStartDate} />
           </div>
           <div className={styles.col4}>
-            <label className={styles.label}>Data final</label>
-            <input className={styles.input} type="date" value={endDate} onChange={(event) => setEndDate(event.target.value)} />
+            <AdminDateField label="Data final" value={endDate} onChange={setEndDate} />
           </div>
+          <div className={styles.col4}>
+            <label className={styles.label}>Período</label>
+            <input className={styles.input} value={`${formatIsoDateBr(startDate)} até ${formatIsoDateBr(endDate)}`} readOnly />
+          </div>
+        </div>
+        <div className={styles.row} style={{ marginBottom: 12 }}>
           <div className={styles.col4}>
             <label className={styles.label}>Acao</label>
             <button className={styles.button} type="button" onClick={() => void load()} disabled={loading}>

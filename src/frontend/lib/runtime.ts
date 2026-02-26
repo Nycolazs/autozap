@@ -227,6 +227,9 @@ export function resolveProfilePictureUrl(phone: string | null | undefined, direc
     return resolveMediaUrl(rawDirect);
   }
   if (/^\/media\/profiles\//i.test(rawDirect)) {
+    if (normalizedPhone) {
+      return resolveMediaUrl(`/profile-picture/${encodeURIComponent(normalizedPhone)}/image`);
+    }
     const directLocal = resolveMediaUrl(rawDirect);
     if (directLocal) return directLocal;
   }
@@ -328,5 +331,21 @@ export function formatTime(value: unknown): string {
     }).format(date);
   } catch (_) {
     return '--:--';
+  }
+}
+
+export function formatDate(value: unknown): string {
+  const date = parseDate(value);
+  if (!date) return '--/--/----';
+
+  try {
+    return new Intl.DateTimeFormat('pt-BR', {
+      day: '2-digit',
+      month: '2-digit',
+      year: 'numeric',
+      timeZone: 'America/Sao_Paulo',
+    }).format(date);
+  } catch (_) {
+    return '--/--/----';
   }
 }

@@ -2,7 +2,9 @@ import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { ActivityIndicator, LayoutChangeEvent, Pressable, StyleSheet, Text, View } from 'react-native';
 import { Audio, AVPlaybackStatusSuccess } from 'expo-av';
 import { Ionicons } from '@expo/vector-icons';
-import { colors } from '../theme';
+import { useAppTheme } from '../context/AppThemeContext';
+import { mergeThemedStyles } from '../lib/themeStyles';
+import { lightColors } from '../theme';
 
 type AudioMessagePlayerProps = {
   uri: string;
@@ -18,6 +20,11 @@ function formatAudioTime(ms: number): string {
 }
 
 export function AudioMessagePlayer({ uri, isOutgoing = false }: AudioMessagePlayerProps) {
+  const { isDark, colors } = useAppTheme();
+  const styles = useMemo(
+    () => mergeThemedStyles(lightStyles, darkStyles, isDark),
+    [isDark]
+  );
   const soundRef = useRef<Audio.Sound | null>(null);
   const [loading, setLoading] = useState(false);
   const [playing, setPlaying] = useState(false);
@@ -171,7 +178,7 @@ export function AudioMessagePlayer({ uri, isOutgoing = false }: AudioMessagePlay
   );
 }
 
-const styles = StyleSheet.create({
+const lightStyles = StyleSheet.create({
   container: {
     minWidth: 210,
     maxWidth: 285,
@@ -222,7 +229,7 @@ const styles = StyleSheet.create({
     left: 0,
     height: 5,
     borderRadius: 999,
-    backgroundColor: colors.primaryStrong,
+    backgroundColor: lightColors.primaryStrong,
   },
   trackKnob: {
     position: 'absolute',
@@ -230,7 +237,7 @@ const styles = StyleSheet.create({
     width: 10,
     height: 10,
     borderRadius: 5,
-    backgroundColor: colors.primaryStrong,
+    backgroundColor: lightColors.primaryStrong,
     top: 4,
   },
   metaRow: {
@@ -242,5 +249,28 @@ const styles = StyleSheet.create({
     fontSize: 12,
     color: '#667781',
     fontWeight: '600',
+  },
+});
+
+const darkStyles = StyleSheet.create({
+  container: {
+    backgroundColor: '#102636',
+    borderColor: '#29435c',
+  },
+  containerOutgoing: {
+    backgroundColor: '#13463e',
+    borderColor: '#1f6658',
+  },
+  playButton: {
+    backgroundColor: '#1f3852',
+  },
+  playButtonOutgoing: {
+    backgroundColor: '#1f6658',
+  },
+  trackBase: {
+    backgroundColor: '#36506a',
+  },
+  metaText: {
+    color: '#b7c9da',
   },
 });

@@ -9,6 +9,7 @@ import { HoursSection } from '@/src/frontend/components/admin/HoursSection';
 import { RankingSection } from '@/src/frontend/components/admin/RankingSection';
 import { TicketsSection } from '@/src/frontend/components/admin/TicketsSection';
 import { UsersSection } from '@/src/frontend/components/admin/UsersSection';
+import { WelcomeSection } from '@/src/frontend/components/admin/WelcomeSection';
 import styles from '@/src/frontend/components/admin/admin.module.css';
 import { useToast } from '@/src/frontend/hooks/useToast';
 import { ToastViewport } from '@/src/frontend/components/chat/ToastViewport';
@@ -20,18 +21,20 @@ import type { AuthSession } from '@/src/frontend/types/chat';
 
 const SECTION_TITLE: Record<AdminSectionKey, string> = {
   users: 'Usuários e papéis',
-  tickets: 'Tickets',
+  tickets: 'Todos os tickets',
   blacklist: 'Blacklist',
   hours: 'Horário comercial',
+  welcome: 'Boas-vindas automáticas',
   await: 'Aguardando automático',
   ranking: 'Ranking de vendedores',
 };
 
 const SECTION_HINT: Record<AdminSectionKey, string> = {
   users: 'Gerencie perfis, papéis e permissões',
-  tickets: 'Distribua e acompanhe atendimentos',
+  tickets: 'Busque, filtre e abra conversas rapidamente',
   blacklist: 'Bloqueie contatos e gerencie restrições',
   hours: 'Configure horários, exceções e mensagens',
+  welcome: 'Cadastre a mensagem automática no horário comercial',
   await: 'Automatize retorno para status aguardando',
   ranking: 'Acompanhe performance do time',
 };
@@ -100,6 +103,7 @@ export default function AdminSellersPage() {
     if (activeSection === 'tickets') return <TicketsSection {...sharedProps} />;
     if (activeSection === 'blacklist') return <BlacklistSection {...sharedProps} />;
     if (activeSection === 'hours') return <HoursSection {...sharedProps} />;
+    if (activeSection === 'welcome') return <WelcomeSection {...sharedProps} />;
     if (activeSection === 'await') return <AwaitSection {...sharedProps} />;
     return <RankingSection {...sharedProps} />;
   }, [activeSection, handleAuthExpired, showToast]);

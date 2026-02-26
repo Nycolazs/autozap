@@ -41,7 +41,8 @@ const { resolveAuthIdentity } = require('./src/server/middleware/auth');
 const logger = createLogger('server');
 
 const dev = process.env.NODE_ENV !== 'production';
-const nextApp = next({ dev });
+const APP_ROOT_DIR = __dirname;
+const nextApp = next({ dev, dir: APP_ROOT_DIR });
 const nextHandler = nextApp.getRequestHandler();
 const APP_RUNTIME_HEADERS = new Set(['desktop', 'electron', 'proton', 'mobile', 'capacitor']);
 const FRONTEND_ROUTES = new Set([

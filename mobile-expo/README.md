@@ -43,3 +43,46 @@ eas login
 eas build:configure
 eas build -p android
 ```
+
+## Atualização automática (APK fora da Play Store)
+
+O app está configurado com `expo-updates` para buscar update OTA automaticamente ao abrir e ao voltar para foreground.
+
+### Fluxo recomendado
+
+1. Faça login no Expo:
+
+```bash
+cd mobile-expo
+npx eas-cli login
+```
+
+2. Vincule o projeto (uma vez):
+
+```bash
+npx eas-cli project:init
+```
+
+3. Gere o APK inicial no canal de produção:
+
+```bash
+npx eas-cli build -p android --profile production
+```
+
+4. Para publicar atualizações de frontend/JS sem novo APK:
+
+```bash
+npm run update:production -- --message "sua mensagem de release"
+```
+
+### Publicar pelo GitHub Actions
+
+Existe workflow em `.github/workflows/mobile-ota-update.yml`.
+
+1. No GitHub, configure o secret `EXPO_TOKEN`.
+2. Execute o workflow **Mobile OTA Update** e informe `channel` e `message`.
+
+### Importante
+
+- Atualizações OTA cobrem JS/TS, estilos e assets.
+- Mudanças nativas (novas libs nativas, permissões, configuração Android/iOS) exigem novo APK.

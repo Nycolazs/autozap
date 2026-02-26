@@ -4,6 +4,7 @@ import type {
   ChatMessage,
   ConnectionStatus,
   ProfilePictureResponse,
+  QuickMessage,
   Ticket,
   UserType,
 } from '../types/chat';
@@ -154,11 +155,60 @@ export function markTicketReadByAgent(ticketId: number): Promise<{ success: true
   );
 }
 
-export function fetchProfilePicture(phone: string): Promise<ProfilePictureResponse> {
+export function fetchProfilePicture(
+  phone: string,
+  options?: { refresh?: boolean }
+): Promise<ProfilePictureResponse> {
   const normalized = String(phone || '').split('@')[0].replace(/\D/g, '');
+  const refreshSuffix = options && options.refresh ? '?refresh=1' : '';
   return requestJson<ProfilePictureResponse>(
-    `/profile-picture/${encodeURIComponent(normalized)}`,
+    `/profile-picture/${encodeURIComponent(normalized)}${refreshSuffix}`,
     { method: 'GET' }
+  );
+}
+
+export function listQuickMessages(): Promise<QuickMessage[]> {
+  return requestJson<QuickMessage[]>(
+    '/quick-messages',
+    { method: 'GET' }
+  );
+}
+
+export function createQuickMessage(payload: {
+  title: string;
+  content: string;
+  shortcut?: string | null;
+}): Promise<QuickMessage> {
+  return requestJson<QuickMessage>(
+    '/quick-messages',
+    {
+      method: 'POST',
+      body: payload,
+    }
+  );
+}
+
+export function updateQuickMessage(
+  quickMessageId: number,
+  payload: {
+    title?: string;
+    content?: string;
+    shortcut?: string | null;
+  }
+): Promise<QuickMessage> {
+  return requestJson<QuickMessage>(
+    `/quick-messages/${encodeURIComponent(quickMessageId)}`,
+    {
+      method: 'PATCH',
+      body: payload,
+    }
+  );
+}
+
+export function deleteQuickMessage(quickMessageId: number): Promise<{ success: true }> {
+  return requestJson<{ success: true }>(
+    `/quick-messages/${encodeURIComponent(quickMessageId)}`,
+    { method: 'DELETE' }
   );
 }
 

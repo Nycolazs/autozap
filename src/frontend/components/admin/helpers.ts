@@ -70,3 +70,11 @@ export function toIsoDateInput(value: Date): string {
   const day = String(value.getDate()).padStart(2, '0');
   return `${year}-${month}-${day}`;
 }
+
+export function formatIsoDateBr(value: string | null | undefined): string {
+  const raw = String(value || '').trim();
+  if (!raw) return '';
+  const match = raw.match(/^(\d{4})-(\d{2})-(\d{2})$/);
+  if (!match) return formatDateOnly(raw);
+  return `${match[3]}/${match[2]}/${match[1]}`;
+}

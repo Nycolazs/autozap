@@ -48,6 +48,22 @@ export function formatTime(value: unknown): string {
   }
 }
 
+export function formatDate(value: unknown): string {
+  const date = parseDate(value);
+  if (!date) return '--/--/----';
+
+  try {
+    return new Intl.DateTimeFormat('pt-BR', {
+      day: '2-digit',
+      month: '2-digit',
+      year: 'numeric',
+      timeZone: 'America/Sao_Paulo',
+    }).format(date);
+  } catch (_) {
+    return '--/--/----';
+  }
+}
+
 export function todayIsoDate(): string {
   const now = new Date();
   const yyyy = now.getFullYear();

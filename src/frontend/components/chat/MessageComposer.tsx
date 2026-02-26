@@ -99,11 +99,11 @@ function findTouchById(touches: TouchList, id: number | null): Touch | null {
   return null;
 }
 
-function normalizeQuickShortcut(value: string): string | null {
-  const raw = String(value || '').trim();
-  if (!raw) return null;
-  const normalized = raw.replace(/\s+/g, '').replace(/[^a-zA-Z0-9_-]/g, '').slice(0, 24).toLowerCase();
-  return normalized || null;
+function quickMessageTitleFromContent(content: string): string {
+  const compact = String(content || '').replace(/\s+/g, ' ').trim();
+  if (!compact) return 'Mensagem rápida';
+  if (compact.length <= 60) return compact;
+  return `${compact.slice(0, 57)}...`;
 }
 
 export function MessageComposer({
@@ -124,15 +124,9 @@ export function MessageComposer({
   const [isSending, setIsSending] = useState(false);
   const [mediaMenuOpen, setMediaMenuOpen] = useState(false);
   const [quickPanelOpen, setQuickPanelOpen] = useState(false);
-  const [quickSearch, setQuickSearch] = useState('');
-  const [quickFormTitle, setQuickFormTitle] = useState('');
-  const [quickFormShortcut, setQuickFormShortcut] = useState('');
   const [quickFormContent, setQuickFormContent] = useState('');
   const [quickActionLoading, setQuickActionLoading] = useState(false);
   const [editingQuickMessageId, setEditingQuickMessageId] = useState<number | null>(null);
-  const [editQuickTitle, setEditQuickTitle] = useState('');
-  const [editQuickShortcut, setEditQuickShortcut] = useState('');
-  const [editQuickContent, setEditQuickContent] = useState('');
   const [isRecording, setIsRecording] = useState(false);
   const [durationSec, setDurationSec] = useState(0);
   const [swipeOffset, setSwipeOffset] = useState(0);
@@ -440,30 +434,14 @@ export function MessageComposer({
     }
   }, [disabled, isSending, message, onSendImage, onToast]);
 
-  const filteredQuickMessages = useMemo(() => {
-    const needle = String(quickSearch || '').trim().toLowerCase();
-    if (!needle) return quickMessages;
-
-    return quickMessages.filter((item) => {
-      const title = String(item.title || '').toLowerCase();
-      const content = String(item.content || '').toLowerCase();
-      const shortcut = String(item.shortcut || '').toLowerCase();
-      return title.includes(needle) || content.includes(needle) || shortcut.includes(needle);
-    });
-  }, [quickMessages, quickSearch]);
-
   const clearQuickEditState = useCallback(() => {
     setEditingQuickMessageId(null);
-    setEditQuickTitle('');
-    setEditQuickShortcut('');
-    setEditQuickContent('');
+    setQuickFormContent('');
   }, []);
 
   const startQuickEdit = useCallback((item: QuickMessage) => {
     setEditingQuickMessageId(Number(item.id));
-    setEditQuickTitle(String(item.title || ''));
-    setEditQuickShortcut(String(item.shortcut || ''));
-    setEditQuickContent(String(item.content || ''));
+    setQuickFormContent(String(item.content || ''));
   }, []);
 
   const handleQuickInsert = useCallback((item: QuickMessage) => {
@@ -479,73 +457,31 @@ export function MessageComposer({
     }, 0);
   }, [onToast]);
 
-  const handleQuickSend = useCallback(async (item: QuickMessage) => {
-    const text = String(item.content || '').trim();
-    if (!text) {
-      onToast('A mensagem rápida está vazia.', 'warning');
-      return;
-    }
-    if (disabled || isSending) return;
+  const handleQuickItemKeyDown = useCallback((event: React.KeyboardEvent<HTMLElement>, item: QuickMessage) => {
+    if (event.key !== 'Enter' && event.key !== ' ') return;
+    event.preventDefault();
+    handleQuickInsert(item);
+  }, [handleQuickInsert]);
 
-    try {
-      setIsSending(true);
-      await onSendText(text);
-      setMessage('');
-      setQuickPanelOpen(false);
-    } catch (_) {
-      onToast('Falha ao enviar mensagem rápida.', 'error');
-    } finally {
-      setIsSending(false);
-    }
-  }, [disabled, isSending, onSendText, onToast]);
-
-  const handleCreateQuick = useCallback(async (event: React.FormEvent<HTMLFormElement>) => {
+  const handleQuickSave = useCallback(async (event: React.FormEvent<HTMLFormElement>) => {
     event.preventDefault();
     if (quickActionLoading) return;
 
-    const title = String(quickFormTitle || '').trim();
     const content = String(quickFormContent || '').trim();
-    const shortcut = normalizeQuickShortcut(quickFormShortcut);
-    if (!title || !content) {
-      onToast('Preencha título e mensagem da resposta rápida.', 'warning');
+    if (!content) {
+      onToast('Digite a mensagem rápida.', 'warning');
       return;
     }
 
-    try {
-      setQuickActionLoading(true);
-      await onCreateQuickMessage({ title, content, shortcut });
-      setQuickFormTitle('');
-      setQuickFormShortcut('');
-      setQuickFormContent('');
-    } catch (_) {
-      // Toast tratado no container
-    } finally {
-      setQuickActionLoading(false);
-    }
-  }, [
-    onCreateQuickMessage,
-    onToast,
-    quickActionLoading,
-    quickFormContent,
-    quickFormShortcut,
-    quickFormTitle,
-  ]);
-
-  const handleUpdateQuick = useCallback(async (event: React.FormEvent<HTMLFormElement>) => {
-    event.preventDefault();
-    if (!editingQuickMessageId || quickActionLoading) return;
-
-    const title = String(editQuickTitle || '').trim();
-    const content = String(editQuickContent || '').trim();
-    const shortcut = normalizeQuickShortcut(editQuickShortcut);
-    if (!title || !content) {
-      onToast('Preencha título e mensagem da resposta rápida.', 'warning');
-      return;
-    }
+    const title = quickMessageTitleFromContent(content);
 
     try {
       setQuickActionLoading(true);
-      await onUpdateQuickMessage(editingQuickMessageId, { title, content, shortcut });
+      if (editingQuickMessageId) {
+        await onUpdateQuickMessage(editingQuickMessageId, { title, content, shortcut: null });
+      } else {
+        await onCreateQuickMessage({ title, content, shortcut: null });
+      }
       clearQuickEditState();
     } catch (_) {
       // Toast tratado no container
@@ -554,24 +490,23 @@ export function MessageComposer({
     }
   }, [
     clearQuickEditState,
-    editQuickContent,
-    editQuickShortcut,
-    editQuickTitle,
     editingQuickMessageId,
-    onToast,
+    onCreateQuickMessage,
     onUpdateQuickMessage,
+    onToast,
     quickActionLoading,
+    quickFormContent,
   ]);
 
-  const handleDeleteQuick = useCallback(async (quickMessageId: number) => {
+  const handleQuickDelete = useCallback(async (item: QuickMessage) => {
     if (quickActionLoading) return;
     const confirmed = window.confirm('Remover esta mensagem rápida?');
     if (!confirmed) return;
 
     try {
       setQuickActionLoading(true);
-      await onDeleteQuickMessage(quickMessageId);
-      if (Number(editingQuickMessageId) === Number(quickMessageId)) {
+      await onDeleteQuickMessage(Number(item.id));
+      if (Number(editingQuickMessageId) === Number(item.id)) {
         clearQuickEditState();
       }
     } catch (_) {
@@ -592,17 +527,19 @@ export function MessageComposer({
 
       if (quickWrapRef.current && !quickWrapRef.current.contains(target)) {
         setQuickPanelOpen(false);
+        clearQuickEditState();
       }
     };
     document.addEventListener('click', handleOutsideClick);
     return () => document.removeEventListener('click', handleOutsideClick);
-  }, []);
+  }, [clearQuickEditState]);
 
   useEffect(() => {
     if (!disabled) return;
     setMediaMenuOpen(false);
     setQuickPanelOpen(false);
-  }, [disabled]);
+    clearQuickEditState();
+  }, [clearQuickEditState, disabled]);
 
   useEffect(() => {
     return () => {
@@ -737,7 +674,11 @@ export function MessageComposer({
               className={`${styles.roundButton} ${quickPanelOpen ? styles.roundButtonActive : ''}`}
               disabled={disabled || isSending}
               onClick={() => {
-                setQuickPanelOpen((prev) => !prev);
+                setQuickPanelOpen((prev) => {
+                  const next = !prev;
+                  if (!next) clearQuickEditState();
+                  return next;
+                });
                 setMediaMenuOpen(false);
               }}
               aria-label="Mensagens rápidas"
@@ -753,45 +694,33 @@ export function MessageComposer({
                   <button
                     type="button"
                     className={styles.quickPanelClose}
-                    onClick={() => setQuickPanelOpen(false)}
+                    onClick={() => {
+                      setQuickPanelOpen(false);
+                      clearQuickEditState();
+                    }}
                     aria-label="Fechar painel"
                   >
                     ×
                   </button>
                 </div>
 
-                <input
-                  className={styles.quickSearch}
-                  placeholder="Buscar por título, atalho ou texto"
-                  value={quickSearch}
-                  onChange={(event) => setQuickSearch(event.target.value)}
-                />
-
-                <form className={styles.quickForm} onSubmit={handleCreateQuick}>
-                  <input
-                    className={styles.quickInput}
-                    placeholder="Título da mensagem"
-                    value={quickFormTitle}
-                    onChange={(event) => setQuickFormTitle(event.target.value)}
-                    maxLength={120}
-                  />
-                  <input
-                    className={styles.quickInput}
-                    placeholder="Atalho opcional (ex: saudacao)"
-                    value={quickFormShortcut}
-                    onChange={(event) => setQuickFormShortcut(event.target.value)}
-                    maxLength={24}
-                  />
+                <form className={styles.quickForm} onSubmit={handleQuickSave}>
+                  {editingQuickMessageId ? (
+                    <div className={styles.quickEditHint}>Editando mensagem rápida</div>
+                  ) : null}
                   <textarea
                     className={styles.quickTextarea}
-                    placeholder="Texto da mensagem rápida"
+                    placeholder="Digite a mensagem rápida"
                     value={quickFormContent}
                     onChange={(event) => setQuickFormContent(event.target.value)}
+                    rows={2}
                     maxLength={5000}
                   />
-                  <button type="submit" className={styles.quickPrimaryButton} disabled={quickActionLoading}>
-                    Salvar mensagem rápida
-                  </button>
+                  <div className={styles.quickFormActions}>
+                    <button type="submit" className={styles.quickPrimaryButton} disabled={quickActionLoading}>
+                      {editingQuickMessageId ? 'Salvar edição' : 'Salvar mensagem'}
+                    </button>
+                  </div>
                 </form>
 
                 <div className={styles.quickList}>
@@ -799,90 +728,50 @@ export function MessageComposer({
                     <div className={styles.quickEmpty}>Carregando mensagens rápidas...</div>
                   ) : null}
 
-                  {!quickMessagesLoading && filteredQuickMessages.length === 0 ? (
+                  {!quickMessagesLoading && quickMessages.length === 0 ? (
                     <div className={styles.quickEmpty}>Nenhuma mensagem rápida encontrada.</div>
                   ) : null}
 
-                  {!quickMessagesLoading ? filteredQuickMessages.map((item) => (
-                    <article key={item.id} className={styles.quickItem}>
-                      {Number(editingQuickMessageId) === Number(item.id) ? (
-                        <form className={styles.quickEditForm} onSubmit={handleUpdateQuick}>
-                          <input
-                            className={styles.quickInput}
-                            value={editQuickTitle}
-                            onChange={(event) => setEditQuickTitle(event.target.value)}
-                            maxLength={120}
-                          />
-                          <input
-                            className={styles.quickInput}
-                            value={editQuickShortcut}
-                            onChange={(event) => setEditQuickShortcut(event.target.value)}
-                            placeholder="Atalho opcional"
-                            maxLength={24}
-                          />
-                          <textarea
-                            className={styles.quickTextarea}
-                            value={editQuickContent}
-                            onChange={(event) => setEditQuickContent(event.target.value)}
-                            maxLength={5000}
-                          />
-                          <div className={styles.quickItemActions}>
-                            <button type="submit" className={styles.quickPrimaryButton} disabled={quickActionLoading}>
-                              Salvar
-                            </button>
-                            <button
-                              type="button"
-                              className={styles.quickGhostButton}
-                              onClick={clearQuickEditState}
-                              disabled={quickActionLoading}
-                            >
-                              Cancelar
-                            </button>
-                          </div>
-                        </form>
-                      ) : (
-                        <>
-                          <div className={styles.quickItemHead}>
-                            <strong className={styles.quickItemTitle}>{item.title}</strong>
-                            {item.shortcut ? <span className={styles.quickShortcut}>/{item.shortcut}</span> : null}
-                          </div>
-                          <p className={styles.quickItemContent}>{item.content}</p>
-                          <div className={styles.quickItemActions}>
-                            <button
-                              type="button"
-                              className={styles.quickPrimaryButton}
-                              onClick={() => handleQuickInsert(item)}
-                              disabled={quickActionLoading}
-                            >
-                              Inserir
-                            </button>
-                            <button
-                              type="button"
-                              className={styles.quickGhostButton}
-                              onClick={() => void handleQuickSend(item)}
-                              disabled={disabled || isSending || quickActionLoading}
-                            >
-                              Enviar
-                            </button>
-                            <button
-                              type="button"
-                              className={styles.quickGhostButton}
-                              onClick={() => startQuickEdit(item)}
-                              disabled={quickActionLoading}
-                            >
-                              Editar
-                            </button>
-                            <button
-                              type="button"
-                              className={styles.quickDangerButton}
-                              onClick={() => void handleDeleteQuick(item.id)}
-                              disabled={quickActionLoading}
-                            >
-                              Excluir
-                            </button>
-                          </div>
-                        </>
-                      )}
+                  {!quickMessagesLoading ? quickMessages.map((item) => (
+                    <article
+                      key={item.id}
+                      className={`${styles.quickItem} ${styles.quickItemClickable}`}
+                      role="button"
+                      tabIndex={0}
+                      onClick={() => handleQuickInsert(item)}
+                      onKeyDown={(event) => handleQuickItemKeyDown(event, item)}
+                    >
+                      <div className={styles.quickItemPick}>
+                        {item.content}
+                      </div>
+                      <div className={styles.quickItemActions}>
+                        <button
+                          type="button"
+                          className={styles.quickGhostButton}
+                          onClick={(event) => {
+                            event.stopPropagation();
+                            startQuickEdit(item);
+                          }}
+                          onKeyDown={(event) => event.stopPropagation()}
+                          disabled={quickActionLoading}
+                        >
+                          Editar
+                        </button>
+                        <button
+                          type="button"
+                          className={styles.quickDeleteIconButton}
+                          onClick={(event) => {
+                            event.stopPropagation();
+                            void handleQuickDelete(item);
+                          }}
+                          onKeyDown={(event) => event.stopPropagation()}
+                          disabled={quickActionLoading}
+                          aria-label="Excluir mensagem rápida"
+                          title="Excluir mensagem rápida"
+                        >
+                          🗑
+                        </button>
+                      </div>
                     </article>
                   )) : null}
                 </div>
@@ -921,7 +810,7 @@ export function MessageComposer({
             onClick={() => void sendText()}
           >
             <span className={styles.sendButtonText}>Enviar</span>
-            <span aria-hidden="true">➤</span>
+            <span className={styles.sendButtonIcon} aria-hidden="true">➤</span>
           </button>
         </div>
       )}

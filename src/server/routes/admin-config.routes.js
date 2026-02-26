@@ -208,6 +208,63 @@ function createAdminConfigRouter({ db, requireAdmin, accountContext, accountMana
     }
   });
 
+  const welcomeRoutePaths = ['/welcome-message', '/admin/welcome-message'];
+
+  router.get(welcomeRoutePaths, requireAdmin, (req, res) => {
+    try {
+      const row = db.prepare('SELECT value FROM settings WHERE key = ?').get('welcome_message');
+      const enabledRow = db.prepare('SELECT value FROM settings WHERE key = ?').get('welcome_message_enabled');
+      const defaultMessage = '👋 Olá! Seja bem-vindo(a)! Um de nossos atendentes já vai responder você. Por favor, aguarde um momento.';
+      const enabled = enabledRow ? enabledRow.value !== '0' : true;
+      return res.json({
+        message: row?.value || defaultMessage,
+        enabled,
+      });
+    } catch (_error) {
+      return res.status(500).json({ error: 'Erro ao carregar mensagem de boas-vindas' });
+    }
+  });
+
+  router.put(welcomeRoutePaths, requireAdmin, (req, res) => {
+    const { message, enabled } = req.body;
+    const hasEnabled = typeof enabled === 'boolean';
+    const hasMessage = typeof message === 'string';
+    if (!hasMessage && !hasEnabled) {
+      return res.status(400).json({ error: 'Informe mensagem ou configuração' });
+    }
+
+    const trimmed = hasMessage ? message.trim() : null;
+    if (hasMessage && enabled !== false && !trimmed) {
+      return res.status(400).json({ error: 'Mensagem é obrigatória' });
+    }
+
+    try {
+      if (hasMessage) {
+        db.prepare(
+          `
+            INSERT INTO settings (key, value)
+            VALUES (?, ?)
+            ON CONFLICT(key) DO UPDATE SET value = excluded.value
+          `
+        ).run('welcome_message', trimmed);
+      }
+
+      if (hasEnabled) {
+        db.prepare(
+          `
+            INSERT INTO settings (key, value)
+            VALUES (?, ?)
+            ON CONFLICT(key) DO UPDATE SET value = excluded.value
+          `
+        ).run('welcome_message_enabled', enabled ? '1' : '0');
+      }
+
+      return res.json({ success: true, message: 'Mensagem de boas-vindas atualizada' });
+    } catch (_error) {
+      return res.status(500).json({ error: 'Erro ao salvar mensagem de boas-vindas' });
+    }
+  });
+
   // ===== API: configuração do Await (mover de 'em_atendimento' -> 'aguardando') =====
   router.get('/admin/await-config', requireAdmin, (req, res) => {
     try {

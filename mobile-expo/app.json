@@ -5,7 +5,14 @@
     "version": "1.0.4",
     "orientation": "portrait",
     "icon": "./assets/icon.png",
-    "userInterfaceStyle": "light",
+    "userInterfaceStyle": "automatic",
+    "runtimeVersion": {
+      "policy": "appVersion"
+    },
+    "updates": {
+      "checkAutomatically": "ON_LOAD",
+      "fallbackToCacheTimeout": 0
+    },
     "newArchEnabled": true,
     "splash": {
       "image": "./assets/splash-icon.png",
@@ -17,6 +24,7 @@
     },
     "android": {
       "package": "com.autozap.mobileexpo",
+      "backgroundColor": "#0B141A",
       "adaptiveIcon": {
         "foregroundImage": "./assets/adaptive-icon.png",
         "backgroundColor": "#0B5BD3"
@@ -25,10 +33,18 @@
       "predictiveBackGestureEnabled": false
     },
     "extra": {
-      "apiBaseUrl": "https://autozap-api-7hf5lkloja-uc.a.run.app"
+      "apiBaseUrl": "https://autozap-api-7hf5lkloja-uc.a.run.app",
+      "eas": {
+        "projectId": "15338cc9-96ee-42c3-b4a8-7235866e3cda"
+      }
     },
     "web": {
       "favicon": "./assets/favicon.png"
-    }
+    },
+    "plugins": [
+      "expo-font",
+      "expo-updates"
+    ],
+    "owner": "nyc2029"
   }
 }

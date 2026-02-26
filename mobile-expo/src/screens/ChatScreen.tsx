@@ -13,9 +13,13 @@ import {
   PanResponder,
   Platform,
   Pressable,
+  ScrollView,
   StyleSheet,
   Text,
   TextInput,
+  type StyleProp,
+  type TextStyle,
+  type ViewStyle,
   View,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
@@ -23,27 +27,34 @@ import { Video, Audio, ResizeMode } from 'expo-av';
 import * as ImagePicker from 'expo-image-picker';
 import { Ionicons } from '@expo/vector-icons';
 import ImageViewing from 'react-native-image-viewing';
+import AsyncStorage from '@react-native-async-storage/async-storage';
 import { ApiRequestError, getAuthToken, resolveApiUrl } from '../api/client';
 import { assignTicket, listAssignees } from '../api/admin';
 import {
+  createQuickMessage,
+  deleteQuickMessage,
   fetchProfilePicture,
   getConnectionStatus,
   listContactTickets,
+  listQuickMessages,
   getTicketMessages,
   markTicketReadByAgent,
   sendAudioMessage,
   sendImageMessage,
   sendTextMessage,
+  updateQuickMessage,
   updateTicketStatus,
 } from '../api/chat';
 import { AudioMessagePlayer } from '../components/AudioMessagePlayer';
 import { useAppSession } from '../context/AppSessionContext';
+import { useAppTheme } from '../context/AppThemeContext';
 import { formatTime } from '../lib/date';
-import { resolveMediaUrl } from '../lib/media';
+import { resolveMediaUrl, resolveProfilePictureUrl } from '../lib/media';
+import { mergeThemedStyles } from '../lib/themeStyles';
 import type { RootStackParamList } from '../types/navigation';
 import type { Assignee } from '../types/admin';
-import type { ChatMessage, Ticket } from '../types/chat';
-import { colors } from '../theme';
+import type { ChatMessage, QuickMessage, Ticket } from '../types/chat';
+import { lightColors } from '../theme';
 
 type ChatScreenProps = NativeStackScreenProps<RootStackParamList, 'Chat'>;
 
@@ -56,6 +67,56 @@ type SelectorOption = {
   disabled?: boolean;
   onPress: () => void;
 };
+
+type RuntimeStyleRefs = {
+  messageRow: StyleProp<ViewStyle>;
+  messageRowClient: StyleProp<ViewStyle>;
+  messageRowAgent: StyleProp<ViewStyle>;
+  messageRowSystem: StyleProp<ViewStyle>;
+  messageAnimatedWrap: StyleProp<ViewStyle>;
+  messageBubble: StyleProp<ViewStyle>;
+  bubbleClient: StyleProp<ViewStyle>;
+  bubbleAgent: StyleProp<ViewStyle>;
+  bubbleSystem: StyleProp<ViewStyle>;
+  replyPreview: StyleProp<ViewStyle>;
+  replyAuthor: StyleProp<TextStyle>;
+  replyText: StyleProp<TextStyle>;
+  messageMetaRow: StyleProp<ViewStyle>;
+  messageMetaSystem: StyleProp<ViewStyle>;
+  messageTime: StyleProp<TextStyle>;
+  metaIcon: StyleProp<TextStyle>;
+  selectorOverlay: StyleProp<ViewStyle>;
+  selectorSheet: StyleProp<ViewStyle>;
+  selectorTitle: StyleProp<TextStyle>;
+  selectorItem: StyleProp<ViewStyle>;
+  selectorItemActive: StyleProp<ViewStyle>;
+  selectorItemDisabled: StyleProp<ViewStyle>;
+  selectorItemText: StyleProp<TextStyle>;
+  selectorItemTextActive: StyleProp<TextStyle>;
+};
+
+let runtimeStyles = {} as RuntimeStyleRefs;
+let runtimePalette = {
+  primary: lightColors.primary,
+  primaryStrong: lightColors.primaryStrong,
+  muted: lightColors.muted,
+};
+const chatMessagesCacheByTicket = new Map<number, ChatMessage[]>();
+const MEDIA_PLACEHOLDER_SET = new Set([
+  '[imagem]',
+  '[figurinha]',
+  '[áudio]',
+  '[audio]',
+  '[vídeo]',
+  '[video]',
+  '[documento]',
+  '🖼️ imagem',
+  '🧩 figurinha',
+  '🎵 áudio',
+  '🎤 áudio',
+  '🎬 vídeo',
+  '📄 documento',
+]);
 
 function normalizeMessageType(message: ChatMessage): MessageTypeNormalized {
   if (message.message_type) return message.message_type;
@@ -76,6 +137,12 @@ function normalizeMessageType(message: ChatMessage): MessageTypeNormalized {
   return 'text';
 }
 
+function isMediaPlaceholderText(value: string): boolean {
+  const normalized = String(value || '').trim().toLowerCase();
+  if (!normalized) return false;
+  return MEDIA_PLACEHOLDER_SET.has(normalized);
+}
+
 function statusLabel(status: Ticket['status']): string {
   if (status === 'pendente') return 'Pendente';
   if (status === 'aguardando') return 'Aguardando';
@@ -92,15 +159,15 @@ function senderLabel(sender: ChatMessage['sender']): string {
 
 function messagePreviewLabel(message: ChatMessage): string {
   const text = String(message.content || '').trim();
-  if (text) return text;
+  if (text && !isMediaPlaceholderText(text)) return text;
 
   const type = normalizeMessageType(message);
-  if (type === 'image') return '[Imagem]';
-  if (type === 'audio') return '[Áudio]';
-  if (type === 'video') return '[Vídeo]';
-  if (type === 'sticker') return '[Figurinha]';
-  if (type === 'document') return '[Documento]';
-  return '[Mensagem]';
+  if (type === 'image') return 'Imagem';
+  if (type === 'audio') return 'Áudio';
+  if (type === 'video') return 'Vídeo';
+  if (type === 'sticker') return 'Figurinha';
+  if (type === 'document') return 'Documento';
+  return 'Mensagem';
 }
 
 function statusOptions(): Ticket['status'][] {
@@ -121,6 +188,49 @@ function parseSqliteDateToEpochMs(value: string | null | undefined): number {
 
 function sortTicketsByNewest(tickets: Ticket[]): Ticket[] {
   return [...tickets].sort((a, b) => Number(b.id) - Number(a.id));
+}
+
+function areMessagesEquivalent(current: ChatMessage[], next: ChatMessage[]): boolean {
+  if (current === next) return true;
+  if (current.length !== next.length) return false;
+
+  for (let index = 0; index < current.length; index += 1) {
+    const left = current[index];
+    const right = next[index];
+    if (!right) return false;
+
+    if (
+      Number(left.id) !== Number(right.id)
+      || Number(left.reply_to_id || 0) !== Number(right.reply_to_id || 0)
+      || String(left.updated_at || '') !== String(right.updated_at || '')
+      || String(left.message_status || '') !== String(right.message_status || '')
+      || String(left.message_type || '') !== String(right.message_type || '')
+      || String(left.content || '') !== String(right.content || '')
+      || String(left.media_url || '') !== String(right.media_url || '')
+    ) {
+      return false;
+    }
+  }
+
+  return true;
+}
+
+const QUICK_MESSAGES_STORAGE_PREFIX = 'autozap.quickMessages.v1';
+
+function sortQuickMessagesByNewest(items: QuickMessage[]): QuickMessage[] {
+  return [...items].sort((a, b) => {
+    const aTs = Date.parse(String(a.updated_at || a.created_at || '')) || 0;
+    const bTs = Date.parse(String(b.updated_at || b.created_at || '')) || 0;
+    if (aTs !== bTs) return bTs - aTs;
+    return Number(b.id) - Number(a.id);
+  });
+}
+
+function quickMessageTitleFromContent(content: string): string {
+  const compact = String(content || '').replace(/\s+/g, ' ').trim();
+  if (!compact) return 'Mensagem rápida';
+  if (compact.length <= 60) return compact;
+  return `${compact.slice(0, 57)}...`;
 }
 
 function normalizeDeliveryStatus(message: ChatMessage, forceReadByView = false): DeliveryStatusNormalized {
@@ -151,6 +261,10 @@ function formatDuration(totalSeconds: number): string {
   return `${String(minutes).padStart(2, '0')}:${String(seconds).padStart(2, '0')}`;
 }
 
+function normalizePhoneForApi(value: unknown): string {
+  return String(value || '').split('@')[0].replace(/\D/g, '');
+}
+
 function resolveRealtimeSocketUrl(): string | null {
   const wsBase = resolveApiUrl('/ws');
   if (!wsBase) return null;
@@ -169,12 +283,12 @@ function MessageDeliveryIndicator({ status }: { status: DeliveryStatusNormalized
   if (!status) return null;
 
   if (status === 'failed') {
-    return <Ionicons name="alert-circle" size={13} color="#d92d20" style={styles.metaIcon} />;
+    return <Ionicons name="alert-circle" size={13} color="#d92d20" style={runtimeStyles.metaIcon} />;
   }
 
   const iconName = status === 'sent' ? 'checkmark' : 'checkmark-done';
   const iconColor = status === 'read' ? '#53bdeb' : '#8696a0';
-  return <Ionicons name={iconName} size={14} color={iconColor} style={styles.metaIcon} />;
+  return <Ionicons name={iconName} size={14} color={iconColor} style={runtimeStyles.metaIcon} />;
 }
 
 function SelectorModal({
@@ -190,26 +304,26 @@ function SelectorModal({
 }) {
   return (
     <Modal transparent visible={visible} animationType="fade" onRequestClose={onClose}>
-      <Pressable style={styles.selectorOverlay} onPress={onClose}>
-        <Pressable style={styles.selectorSheet} onPress={() => {}}>
-          <Text style={styles.selectorTitle}>{title}</Text>
+      <Pressable style={runtimeStyles.selectorOverlay} onPress={onClose}>
+        <Pressable style={runtimeStyles.selectorSheet} onPress={() => {}}>
+          <Text style={runtimeStyles.selectorTitle}>{title}</Text>
           {options.map((option) => (
             <Pressable
               key={option.key}
               style={[
-                styles.selectorItem,
-                option.active ? styles.selectorItemActive : null,
-                option.disabled ? styles.selectorItemDisabled : null,
+                runtimeStyles.selectorItem,
+                option.active ? runtimeStyles.selectorItemActive : null,
+                option.disabled ? runtimeStyles.selectorItemDisabled : null,
               ]}
               disabled={option.disabled}
               onPress={() => {
                 option.onPress();
               }}
             >
-              <Text style={[styles.selectorItemText, option.active ? styles.selectorItemTextActive : null]}>
+              <Text style={[runtimeStyles.selectorItemText, option.active ? runtimeStyles.selectorItemTextActive : null]}>
                 {option.label}
               </Text>
-              {option.active ? <Ionicons name="checkmark" size={16} color={colors.primaryStrong} /> : null}
+              {option.active ? <Ionicons name="checkmark" size={16} color={runtimePalette.primaryStrong} /> : null}
             </Pressable>
           ))}
         </Pressable>
@@ -239,6 +353,7 @@ function SwipeReplyMessage({
 }: SwipeReplyMessageProps) {
   const translateX = useRef(new Animated.Value(0)).current;
   const triggeredRef = useRef(false);
+  const lastTapAtRef = useRef(0);
   const deliveryStatus = normalizeDeliveryStatus(item, forceReadByView);
 
   const resetPosition = useCallback(() => {
@@ -269,21 +384,33 @@ function SwipeReplyMessage({
     onPanResponderRelease: resetPosition,
     onPanResponderTerminate: resetPosition,
     onPanResponderTerminationRequest: () => true,
-  }), [fromClient, isSystem, item, onReply, resetPosition, translateX]);
+  }), [isSystem, item, onReply, resetPosition, translateX]);
+
+  const handleBubblePress = useCallback(() => {
+    if (isSystem) return;
+
+    const now = Date.now();
+    const elapsed = now - lastTapAtRef.current;
+    lastTapAtRef.current = now;
+    if (elapsed > 0 && elapsed < 280) {
+      onReply(item);
+    }
+  }, [isSystem, item, onReply]);
 
   return (
     <View
       style={[
-        styles.messageRow,
-        fromClient ? styles.messageRowClient : styles.messageRowAgent,
-        isSystem ? styles.messageRowSystem : null,
+        runtimeStyles.messageRow,
+        fromClient ? runtimeStyles.messageRowClient : runtimeStyles.messageRowAgent,
+        isSystem ? runtimeStyles.messageRowSystem : null,
       ]}
     >
       <Animated.View
-        style={styles.messageAnimatedWrap}
+        style={runtimeStyles.messageAnimatedWrap}
         {...(!isSystem ? panResponder.panHandlers : {})}
       >
         <Pressable
+          onPress={handleBubblePress}
           onLongPress={() => {
             if (!isSystem) onReply(item);
           }}
@@ -291,22 +418,22 @@ function SwipeReplyMessage({
         >
           <Animated.View
             style={[
-              styles.messageBubble,
-              fromClient ? styles.bubbleClient : styles.bubbleAgent,
-              isSystem ? styles.bubbleSystem : null,
+              runtimeStyles.messageBubble,
+              fromClient ? runtimeStyles.bubbleClient : runtimeStyles.bubbleAgent,
+              isSystem ? runtimeStyles.bubbleSystem : null,
               { transform: [{ translateX }] },
             ]}
           >
             {reply ? (
-              <View style={styles.replyPreview}>
-                <Text style={styles.replyAuthor}>{senderLabel(reply.sender)}</Text>
-                <Text numberOfLines={1} style={styles.replyText}>{messagePreviewLabel(reply)}</Text>
+              <View style={runtimeStyles.replyPreview}>
+                <Text style={runtimeStyles.replyAuthor}>{senderLabel(reply.sender)}</Text>
+                <Text numberOfLines={1} style={runtimeStyles.replyText}>{messagePreviewLabel(reply)}</Text>
               </View>
             ) : null}
 
             {renderContent(item)}
-            <View style={[styles.messageMetaRow, isSystem ? styles.messageMetaSystem : null]}>
-              <Text style={styles.messageTime}>{formatTime(item.created_at)}</Text>
+            <View style={[runtimeStyles.messageMetaRow, isSystem ? runtimeStyles.messageMetaSystem : null]}>
+              <Text style={runtimeStyles.messageTime}>{formatTime(item.created_at)}</Text>
               {!fromClient && !isSystem ? <MessageDeliveryIndicator status={deliveryStatus} /> : null}
             </View>
           </Animated.View>
@@ -318,11 +445,20 @@ function SwipeReplyMessage({
 
 export function ChatScreen({ route, navigation }: ChatScreenProps) {
   const { session, signOut } = useAppSession();
+  const { colors: themeColors, isDark } = useAppTheme();
+  const styles = useMemo(() => mergeThemedStyles(lightStyles, darkStyles, isDark), [isDark]);
+  runtimeStyles = styles;
+  runtimePalette = {
+    primary: themeColors.primary,
+    primaryStrong: themeColors.primaryStrong,
+    muted: themeColors.muted,
+  };
   const isFocused = useIsFocused();
   const [ticket, setTicket] = useState<Ticket>(route.params.ticket);
+  const initialCachedMessages = chatMessagesCacheByTicket.get(Number(route.params.ticket.id)) || [];
 
-  const [messages, setMessages] = useState<ChatMessage[]>([]);
-  const [loading, setLoading] = useState(true);
+  const [messages, setMessages] = useState<ChatMessage[]>(() => initialCachedMessages);
+  const [loading, setLoading] = useState(() => initialCachedMessages.length === 0);
   const [connectionOnline, setConnectionOnline] = useState(false);
   const [inputText, setInputText] = useState('');
   const [sending, setSending] = useState(false);
@@ -338,6 +474,12 @@ export function ChatScreen({ route, navigation }: ChatScreenProps) {
   const [updatingStatus, setUpdatingStatus] = useState(false);
   const [updatingAssignee, setUpdatingAssignee] = useState(false);
   const [keyboardHeight, setKeyboardHeight] = useState(0);
+  const [quickMessages, setQuickMessages] = useState<QuickMessage[]>([]);
+  const [quickMessagesVisible, setQuickMessagesVisible] = useState(false);
+  const [quickMessagesLoading, setQuickMessagesLoading] = useState(false);
+  const [quickActionLoading, setQuickActionLoading] = useState(false);
+  const [quickFormText, setQuickFormText] = useState('');
+  const [editingQuickMessageId, setEditingQuickMessageId] = useState<number | null>(null);
 
   const [recording, setRecording] = useState<Audio.Recording | null>(null);
   const [recordingSeconds, setRecordingSeconds] = useState(0);
@@ -349,6 +491,9 @@ export function ChatScreen({ route, navigation }: ChatScreenProps) {
   const recordingRef = useRef<Audio.Recording | null>(null);
   const recordingStartPromiseRef = useRef<Promise<void> | null>(null);
   const realtimeRefreshTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const quickMessagesModeRef = useRef<'remote' | 'local'>('remote');
+  const quickMessagesMissingRef = useRef(false);
+  const quickMessagesFallbackWarnedRef = useRef(false);
 
   const canSendText = useMemo(() => !sending && !!inputText.trim(), [inputText, sending]);
   const contactInitial = useMemo(() => {
@@ -390,9 +535,9 @@ export function ChatScreen({ route, navigation }: ChatScreenProps) {
 
   const forceScrollToBottom = useCallback(() => {
     shouldStickToBottomRef.current = true;
-    scrollToLatest(false);
-    setTimeout(() => scrollToLatest(false), 80);
-    setTimeout(() => scrollToLatest(false), 240);
+    requestAnimationFrame(() => {
+      scrollToLatest(false);
+    });
   }, [scrollToLatest]);
 
   useEffect(() => {
@@ -403,19 +548,27 @@ export function ChatScreen({ route, navigation }: ChatScreenProps) {
   useEffect(() => {
     let active = true;
     let retryTimer: ReturnType<typeof setTimeout> | null = null;
+    const normalizedPhone = normalizePhoneForApi(ticket.phone);
 
     const loadProfilePicture = async (attempt: number) => {
       try {
-        const response = await fetchProfilePicture(ticket.phone);
+        const response = await fetchProfilePicture(
+          normalizedPhone || ticket.phone,
+          attempt > 0 ? { refresh: true } : undefined
+        );
         if (!active) return;
 
-        if (response && response.url) {
-          setProfilePictureUrl(resolveMediaUrl(response.url));
+        const resolved = resolveProfilePictureUrl(
+          normalizedPhone,
+          response && response.url ? response.url : (ticket.avatar_url || null)
+        );
+        if (resolved) {
+          setProfilePictureUrl(resolved);
           return;
         }
 
         setProfilePictureUrl(null);
-        if (response && response.pending && attempt < 4) {
+        if (response && response.pending && attempt < 5) {
           retryTimer = setTimeout(() => {
             void loadProfilePicture(attempt + 1);
           }, 1200 * (attempt + 1));
@@ -432,7 +585,7 @@ export function ChatScreen({ route, navigation }: ChatScreenProps) {
       active = false;
       if (retryTimer) clearTimeout(retryTimer);
     };
-  }, [ticket.phone]);
+  }, [ticket.avatar_url, ticket.phone]);
 
   useEffect(() => {
     let mounted = true;
@@ -455,11 +608,16 @@ export function ChatScreen({ route, navigation }: ChatScreenProps) {
   }, []);
 
   const loadMessages = useCallback(async (silent = false) => {
-    if (!silent) setLoading(true);
+    if (!silent) {
+      const cached = chatMessagesCacheByTicket.get(Number(ticket.id));
+      if (!cached || cached.length === 0) {
+        setLoading(true);
+      }
+    }
 
     try {
       const list = await getTicketMessages(ticket.id, 350);
-      setMessages(list);
+      setMessages((current) => (areMessagesEquivalent(current, list) ? current : list));
     } catch (error) {
       if (error instanceof ApiRequestError && error.status === 401) {
         await signOut();
@@ -473,6 +631,12 @@ export function ChatScreen({ route, navigation }: ChatScreenProps) {
       if (!silent) setLoading(false);
     }
   }, [signOut, ticket.id]);
+
+  useEffect(() => {
+    const key = Number(ticket.id);
+    if (!Number.isFinite(key) || key <= 0) return;
+    chatMessagesCacheByTicket.set(key, messages);
+  }, [messages, ticket.id]);
 
   const loadContactTicketHistory = useCallback(async (silent = true) => {
     if (!silent) setLoadingTicketHistory(true);
@@ -531,6 +695,271 @@ export function ChatScreen({ route, navigation }: ChatScreenProps) {
     } catch (_) {}
   }, [ticket.id]);
 
+  const quickMessagesStorageKey = useMemo(() => {
+    if (!session) return `${QUICK_MESSAGES_STORAGE_PREFIX}:guest`;
+    return `${QUICK_MESSAGES_STORAGE_PREFIX}:${session.userType}:${session.userId}`;
+  }, [session]);
+
+  const readLocalQuickMessages = useCallback(async (): Promise<QuickMessage[]> => {
+    if (!session) return [];
+
+    try {
+      const raw = await AsyncStorage.getItem(quickMessagesStorageKey);
+      if (!raw) return [];
+      const parsed = JSON.parse(raw);
+      if (!Array.isArray(parsed)) return [];
+
+      const fallbackType = session.userType === 'admin' ? 'admin' : 'seller';
+      const normalized: QuickMessage[] = [];
+      for (const row of parsed) {
+        const id = Number(row && row.id);
+        const content = String((row && row.content) || '').trim();
+        if (!Number.isFinite(id) || id <= 0 || !content) continue;
+        const createdAt = String((row && row.created_at) || new Date().toISOString());
+        const updatedAt = String((row && row.updated_at) || createdAt);
+        normalized.push({
+          id,
+          user_id: Number((row && row.user_id) || session.userId),
+          user_type: row && row.user_type === 'admin'
+            ? 'admin'
+            : row && row.user_type === 'seller'
+              ? 'seller'
+              : fallbackType,
+          shortcut: null,
+          title: String((row && row.title) || quickMessageTitleFromContent(content)),
+          content,
+          created_at: createdAt,
+          updated_at: updatedAt,
+        });
+      }
+
+      return sortQuickMessagesByNewest(normalized);
+    } catch (_) {
+      return [];
+    }
+  }, [quickMessagesStorageKey, session]);
+
+  const writeLocalQuickMessages = useCallback(async (items: QuickMessage[]) => {
+    try {
+      await AsyncStorage.setItem(quickMessagesStorageKey, JSON.stringify(items));
+    } catch (_) {}
+  }, [quickMessagesStorageKey]);
+
+  const clearQuickForm = useCallback(() => {
+    setEditingQuickMessageId(null);
+    setQuickFormText('');
+  }, []);
+
+  const switchQuickMessagesToLocal = useCallback(async (notify: boolean) => {
+    quickMessagesModeRef.current = 'local';
+    quickMessagesMissingRef.current = true;
+    const localItems = await readLocalQuickMessages();
+    setQuickMessages(localItems);
+
+    if (notify && !quickMessagesFallbackWarnedRef.current) {
+      quickMessagesFallbackWarnedRef.current = true;
+      Alert.alert('Mensagens rápidas', 'Backend sem rota de mensagens rápidas. Usando modo local neste dispositivo.');
+    }
+  }, [readLocalQuickMessages]);
+
+  const loadQuickMessages = useCallback(async (silent = true) => {
+    if (!session) return;
+    if (!silent) setQuickMessagesLoading(true);
+
+    try {
+      const rows = await listQuickMessages();
+      setQuickMessages(sortQuickMessagesByNewest(Array.isArray(rows) ? rows : []));
+      quickMessagesModeRef.current = 'remote';
+      quickMessagesMissingRef.current = false;
+      quickMessagesFallbackWarnedRef.current = false;
+    } catch (error) {
+      if (error instanceof ApiRequestError && error.status === 404) {
+        await switchQuickMessagesToLocal(!silent);
+      } else if (error instanceof ApiRequestError && error.status === 401) {
+        await signOut();
+      } else if (!silent) {
+        const message = error instanceof Error ? error.message : 'Falha ao carregar mensagens rápidas.';
+        Alert.alert('Erro', message);
+      }
+    } finally {
+      if (!silent) setQuickMessagesLoading(false);
+    }
+  }, [session, signOut, switchQuickMessagesToLocal]);
+
+  const handleOpenQuickMessages = useCallback(() => {
+    setQuickMessagesVisible(true);
+    void loadQuickMessages(false);
+  }, [loadQuickMessages]);
+
+  const handleQuickInsert = useCallback((item: QuickMessage) => {
+    const text = String(item.content || '').trim();
+    if (!text) return;
+    setInputText(text);
+    setQuickMessagesVisible(false);
+    clearQuickForm();
+  }, [clearQuickForm]);
+
+  const handleQuickEdit = useCallback((item: QuickMessage) => {
+    setEditingQuickMessageId(Number(item.id));
+    setQuickFormText(String(item.content || ''));
+  }, []);
+
+  const createQuickMessageLocal = useCallback(async (content: string) => {
+    if (!session) return;
+    const now = new Date().toISOString();
+    let nextId = Date.now();
+    for (const item of quickMessages) {
+      const value = Number(item.id || 0);
+      if (value >= nextId) nextId = value + 1;
+    }
+
+    const created: QuickMessage = {
+      id: nextId,
+      user_id: session.userId,
+      user_type: session.userType,
+      shortcut: null,
+      title: quickMessageTitleFromContent(content),
+      content,
+      created_at: now,
+      updated_at: now,
+    };
+
+    const nextRows = sortQuickMessagesByNewest([created, ...quickMessages.filter((item) => Number(item.id) !== nextId)]);
+    setQuickMessages(nextRows);
+    await writeLocalQuickMessages(nextRows);
+  }, [quickMessages, session, writeLocalQuickMessages]);
+
+  const updateQuickMessageLocal = useCallback(async (quickMessageId: number, content: string) => {
+    const nextRows = sortQuickMessagesByNewest(
+      quickMessages.map((item) => {
+        if (Number(item.id) !== Number(quickMessageId)) return item;
+        return {
+          ...item,
+          title: quickMessageTitleFromContent(content),
+          content,
+          updated_at: new Date().toISOString(),
+        };
+      })
+    );
+    setQuickMessages(nextRows);
+    await writeLocalQuickMessages(nextRows);
+  }, [quickMessages, writeLocalQuickMessages]);
+
+  const deleteQuickMessageLocal = useCallback(async (quickMessageId: number) => {
+    const nextRows = quickMessages.filter((item) => Number(item.id) !== Number(quickMessageId));
+    setQuickMessages(nextRows);
+    await writeLocalQuickMessages(nextRows);
+  }, [quickMessages, writeLocalQuickMessages]);
+
+  const handleQuickSave = useCallback(async () => {
+    const content = String(quickFormText || '').trim();
+    if (!content) {
+      Alert.alert('Mensagens rápidas', 'Digite a mensagem antes de salvar.');
+      return;
+    }
+
+    setQuickActionLoading(true);
+    try {
+      if (quickMessagesModeRef.current === 'local' || quickMessagesMissingRef.current) {
+        if (editingQuickMessageId) {
+          await updateQuickMessageLocal(editingQuickMessageId, content);
+        } else {
+          await createQuickMessageLocal(content);
+        }
+      } else if (editingQuickMessageId) {
+        const updated = await updateQuickMessage(editingQuickMessageId, {
+          title: quickMessageTitleFromContent(content),
+          content,
+          shortcut: null,
+        });
+        setQuickMessages((current) => sortQuickMessagesByNewest(
+          current.map((item) => (Number(item.id) === Number(updated.id) ? updated : item))
+        ));
+      } else {
+        const created = await createQuickMessage({
+          title: quickMessageTitleFromContent(content),
+          content,
+          shortcut: null,
+        });
+        setQuickMessages((current) => sortQuickMessagesByNewest([created, ...current.filter((item) => Number(item.id) !== Number(created.id))]));
+      }
+
+      clearQuickForm();
+    } catch (error) {
+      if (error instanceof ApiRequestError && error.status === 404) {
+        await switchQuickMessagesToLocal(true);
+        if (editingQuickMessageId) {
+          await updateQuickMessageLocal(editingQuickMessageId, content);
+        } else {
+          await createQuickMessageLocal(content);
+        }
+        clearQuickForm();
+      } else if (error instanceof ApiRequestError && error.status === 401) {
+        await signOut();
+      } else {
+        const message = error instanceof Error ? error.message : 'Falha ao salvar mensagem rápida.';
+        Alert.alert('Erro', message);
+      }
+    } finally {
+      setQuickActionLoading(false);
+    }
+  }, [
+    clearQuickForm,
+    createQuickMessageLocal,
+    editingQuickMessageId,
+    quickFormText,
+    signOut,
+    switchQuickMessagesToLocal,
+    updateQuickMessageLocal,
+  ]);
+
+  const handleQuickDelete = useCallback((item: QuickMessage) => {
+    Alert.alert('Excluir mensagem', 'Deseja remover esta mensagem rápida?', [
+      { text: 'Cancelar', style: 'cancel' },
+      {
+        text: 'Excluir',
+        style: 'destructive',
+        onPress: () => {
+          void (async () => {
+            setQuickActionLoading(true);
+            try {
+              const targetId = Number(item.id);
+              if (quickMessagesModeRef.current === 'local' || quickMessagesMissingRef.current) {
+                await deleteQuickMessageLocal(targetId);
+              } else {
+                await deleteQuickMessage(targetId);
+                setQuickMessages((current) => current.filter((row) => Number(row.id) !== targetId));
+              }
+              if (Number(editingQuickMessageId) === targetId) {
+                clearQuickForm();
+              }
+            } catch (error) {
+              if (error instanceof ApiRequestError && error.status === 404) {
+                await switchQuickMessagesToLocal(true);
+                await deleteQuickMessageLocal(Number(item.id));
+                if (Number(editingQuickMessageId) === Number(item.id)) {
+                  clearQuickForm();
+                }
+              } else if (error instanceof ApiRequestError && error.status === 401) {
+                await signOut();
+              } else {
+                const message = error instanceof Error ? error.message : 'Falha ao excluir mensagem.';
+                Alert.alert('Erro', message);
+              }
+            } finally {
+              setQuickActionLoading(false);
+            }
+          })();
+        },
+      },
+    ]);
+  }, [clearQuickForm, deleteQuickMessageLocal, editingQuickMessageId, signOut, switchQuickMessagesToLocal]);
+
+  const closeQuickMessagesPanel = useCallback(() => {
+    setQuickMessagesVisible(false);
+    clearQuickForm();
+  }, [clearQuickForm]);
+
   const loadConnection = useCallback(async () => {
     try {
       const state = await getConnectionStatus();
@@ -541,7 +970,7 @@ export function ChatScreen({ route, navigation }: ChatScreenProps) {
   }, []);
 
   useEffect(() => {
-    void Promise.all([loadMessages(), loadConnection(), loadContactTicketHistory(false)]);
+    void Promise.all([loadMessages(), loadConnection(), loadContactTicketHistory(false), loadQuickMessages(true)]);
 
     const messagesInterval = setInterval(() => {
       void loadMessages(true);
@@ -555,17 +984,23 @@ export function ChatScreen({ route, navigation }: ChatScreenProps) {
       void loadConnection();
     }, 20000);
 
+    const quickMessagesInterval = setInterval(() => {
+      if (quickMessagesModeRef.current !== 'remote') return;
+      void loadQuickMessages(true);
+    }, 25000);
+
     return () => {
       clearInterval(messagesInterval);
       clearInterval(contactTicketsInterval);
       clearInterval(connectionInterval);
+      clearInterval(quickMessagesInterval);
       if (realtimeRefreshTimeoutRef.current) {
         clearTimeout(realtimeRefreshTimeoutRef.current);
         realtimeRefreshTimeoutRef.current = null;
       }
       stopRecordTimer();
     };
-  }, [loadConnection, loadContactTicketHistory, loadMessages, stopRecordTimer]);
+  }, [loadConnection, loadContactTicketHistory, loadMessages, loadQuickMessages, stopRecordTimer]);
 
   useEffect(() => {
     const unsubscribe = navigation.addListener('focus', () => {
@@ -896,6 +1331,20 @@ export function ChatScreen({ route, navigation }: ChatScreenProps) {
     }
   }, [loadMessages, recording, recordingSeconds, replyTo, stopRecordTimer, ticket.id]);
 
+  useEffect(() => {
+    return () => {
+      stopRecordTimer();
+      const current = recordingRef.current;
+      recordingRef.current = null;
+      if (current) {
+        void current.stopAndUnloadAsync().catch(() => {});
+      }
+      try {
+        void Audio.setAudioModeAsync({ allowsRecordingIOS: false });
+      } catch (_) {}
+    };
+  }, [stopRecordTimer]);
+
   const renderMessageContent = useCallback((message: ChatMessage) => {
     const type = normalizeMessageType(message);
 
@@ -935,7 +1384,7 @@ export function ChatScreen({ route, navigation }: ChatScreenProps) {
     }
 
     return <Text style={styles.messageText}>{message.content}</Text>;
-  }, []);
+  }, [styles]);
 
   const onMessagesScroll = useCallback((event: { nativeEvent: { contentOffset: { y: number }; contentSize: { height: number }; layoutMeasurement: { height: number } } }) => {
     if (initialScrollPendingRef.current) return;
@@ -950,6 +1399,7 @@ export function ChatScreen({ route, navigation }: ChatScreenProps) {
       return String(a.created_at).localeCompare(String(b.created_at));
     });
   }, [messages]);
+  const showBlockingMessagesLoader = loading && sortedMessages.length === 0;
 
   const statusSelectorOptions = useMemo<SelectorOption[]>(() => {
     return statusOptions().map((status) => ({
@@ -1020,17 +1470,13 @@ export function ChatScreen({ route, navigation }: ChatScreenProps) {
     if (!messages.length) return;
     if (!initialScrollPendingRef.current) return;
 
-    const frame = requestAnimationFrame(() => {
-      forceScrollToBottom();
-    });
     const timeout = setTimeout(() => {
       forceScrollToBottom();
       initialScrollPendingRef.current = false;
       shouldStickToBottomRef.current = true;
-    }, 220);
+    }, 70);
 
     return () => {
-      cancelAnimationFrame(frame);
       clearTimeout(timeout);
     };
   }, [forceScrollToBottom, messages.length]);
@@ -1052,7 +1498,24 @@ export function ChatScreen({ route, navigation }: ChatScreenProps) {
 
             <View style={styles.contactAvatarWrap}>
               {profilePictureUrl ? (
-                <Image source={{ uri: profilePictureUrl }} style={styles.contactAvatarImage} />
+                <Image
+                  source={{ uri: profilePictureUrl }}
+                  style={styles.contactAvatarImage}
+                  onError={() => {
+                    setProfilePictureUrl(null);
+                    const normalizedPhone = normalizePhoneForApi(ticket.phone);
+                    if (!normalizedPhone) return;
+                    void (async () => {
+                      try {
+                        const response = await fetchProfilePicture(normalizedPhone, { refresh: true });
+                        const resolved = resolveProfilePictureUrl(normalizedPhone, response?.url || null);
+                        if (resolved) {
+                          setProfilePictureUrl(resolved);
+                        }
+                      } catch (_) {}
+                    })();
+                  }}
+                />
               ) : (
                 <View style={styles.contactAvatarFallback}>
                   <Text style={styles.contactAvatarInitial}>{contactInitial}</Text>
@@ -1088,7 +1551,7 @@ export function ChatScreen({ route, navigation }: ChatScreenProps) {
                 >
                   <Text style={styles.dropdownValue}>{statusLabel(ticket.status)}</Text>
                   {updatingStatus ? (
-                    <ActivityIndicator size="small" color={colors.primaryStrong} />
+                    <ActivityIndicator size="small" color={themeColors.primaryStrong} />
                   ) : (
                     <Ionicons name="chevron-down" size={16} color="#3a4b61" />
                   )}
@@ -1111,7 +1574,7 @@ export function ChatScreen({ route, navigation }: ChatScreenProps) {
                 >
                   <Text numberOfLines={1} style={styles.dropdownValue}>{assigneeLabel}</Text>
                   {updatingAssignee ? (
-                    <ActivityIndicator size="small" color={colors.primaryStrong} />
+                    <ActivityIndicator size="small" color={themeColors.primaryStrong} />
                   ) : (
                     <Ionicons name="chevron-down" size={16} color="#3a4b61" />
                   )}
@@ -1127,10 +1590,10 @@ export function ChatScreen({ route, navigation }: ChatScreenProps) {
               disabled={loadingTicketHistory || historyOptions.length === 0}
             >
               {loadingTicketHistory ? (
-                <ActivityIndicator size="small" color={colors.primaryStrong} />
+                <ActivityIndicator size="small" color={themeColors.primaryStrong} />
               ) : (
                 <>
-                  <Ionicons name="time-outline" size={14} color={colors.primaryStrong} />
+                  <Ionicons name="time-outline" size={14} color={themeColors.primaryStrong} />
                   <Text style={styles.ticketHistoryButtonText}>
                     {oldTicketsCount > 0 ? `Tickets anteriores (${oldTicketsCount})` : 'Histórico'}
                   </Text>
@@ -1139,48 +1602,62 @@ export function ChatScreen({ route, navigation }: ChatScreenProps) {
             </Pressable>
           </View>
 
-          {loading ? (
+          {showBlockingMessagesLoader ? (
             <View style={styles.loadingWrap}>
-              <ActivityIndicator color={colors.primary} />
+              <ActivityIndicator color={themeColors.primary} />
               <Text style={styles.loadingText}>Carregando mensagens...</Text>
             </View>
           ) : (
-            <FlatList
-              ref={listRef}
-              data={sortedMessages}
-              keyExtractor={(item) => String(item.id)}
-              removeClippedSubviews={false}
-              contentContainerStyle={styles.messagesContent}
-              onScroll={onMessagesScroll}
-              scrollEventThrottle={16}
-              bounces={false}
-              overScrollMode="never"
-              onContentSizeChange={() => {
-                if (shouldStickToBottomRef.current) {
-                  scrollToLatest(true);
-                }
-              }}
-              renderItem={({ item }) => {
-                const reply = item.reply_to_id ? messageMap.get(item.reply_to_id) || null : null;
-                const fromClient = item.sender === 'client';
-                const isSystem = item.sender === 'system';
+            <View style={styles.messagesListWrap}>
+              <FlatList
+                ref={listRef}
+                data={sortedMessages}
+                keyExtractor={(item) => String(item.id)}
+                initialNumToRender={24}
+                maxToRenderPerBatch={20}
+                windowSize={13}
+                keyboardShouldPersistTaps="handled"
+                contentContainerStyle={styles.messagesContent}
+                onScroll={onMessagesScroll}
+                scrollEventThrottle={16}
+                bounces={false}
+                overScrollMode="never"
+                onContentSizeChange={() => {
+                  if (shouldStickToBottomRef.current) {
+                    scrollToLatest(true);
+                  }
+                }}
+                renderItem={({ item }) => {
+                  const reply = item.reply_to_id ? messageMap.get(item.reply_to_id) || null : null;
+                  const fromClient = item.sender === 'client';
+                  const isSystem = item.sender === 'system';
 
-                return (
-                  <SwipeReplyMessage
-                    item={item}
-                    reply={reply}
-                    fromClient={fromClient}
-                    isSystem={isSystem}
-                    forceReadByView={isFocused}
-                    onReply={(message) => {
-                      if (isHistoricalTicket) return;
-                      setReplyTo(message);
-                    }}
-                    renderContent={renderMessageContent}
-                  />
-                );
-              }}
-            />
+                  return (
+                    <SwipeReplyMessage
+                      item={item}
+                      reply={reply}
+                      fromClient={fromClient}
+                      isSystem={isSystem}
+                      forceReadByView={isFocused}
+                      onReply={(message) => {
+                        if (isHistoricalTicket) return;
+                        setReplyTo(message);
+                      }}
+                      renderContent={renderMessageContent}
+                    />
+                  );
+                }}
+              />
+
+              {loading ? (
+                <View pointerEvents="none" style={styles.softLoadingWrap}>
+                  <View style={styles.softLoadingChip}>
+                    <ActivityIndicator size="small" color={themeColors.primary} />
+                    <Text style={styles.softLoadingText}>Atualizando mensagens...</Text>
+                  </View>
+                </View>
+              ) : null}
+            </View>
           )}
 
           {replyTo && !isHistoricalTicket ? (
@@ -1190,7 +1667,7 @@ export function ChatScreen({ route, navigation }: ChatScreenProps) {
                 <Text style={styles.replyComposerValue} numberOfLines={1}>{messagePreviewLabel(replyTo)}</Text>
               </View>
               <Pressable onPress={() => setReplyTo(null)} style={styles.replyComposerCloseButton}>
-                <Ionicons name="close" size={18} color={colors.muted} />
+                <Ionicons name="close" size={18} color={themeColors.muted} />
               </Pressable>
             </View>
           ) : null}
@@ -1221,6 +1698,10 @@ export function ChatScreen({ route, navigation }: ChatScreenProps) {
                 <View style={styles.inputShell}>
                   <Pressable onPress={() => void handlePickImage(false)} style={styles.inputIconButton}>
                     <Ionicons name="add-circle-outline" size={22} color="#5f7288" />
+                  </Pressable>
+
+                  <Pressable onPress={handleOpenQuickMessages} style={styles.inputIconButton}>
+                    <Ionicons name="flash-outline" size={20} color="#5f7288" />
                   </Pressable>
 
                   <TextInput
@@ -1270,6 +1751,91 @@ export function ChatScreen({ route, navigation }: ChatScreenProps) {
         visible={!!previewImage}
         onRequestClose={() => setPreviewImage(null)}
       />
+      <Modal transparent visible={quickMessagesVisible} animationType="fade" onRequestClose={closeQuickMessagesPanel}>
+        <Pressable style={styles.quickOverlay} onPress={closeQuickMessagesPanel}>
+          <Pressable style={styles.quickSheet} onPress={() => {}}>
+            <View style={styles.quickSheetHead}>
+              <Text style={styles.quickSheetTitle}>Mensagens rápidas</Text>
+              <Pressable style={styles.quickCloseButton} onPress={closeQuickMessagesPanel}>
+                <Ionicons name="close" size={20} color="#5b7088" />
+              </Pressable>
+            </View>
+
+            <View style={styles.quickForm}>
+              {editingQuickMessageId ? (
+                <Text style={styles.quickEditHint}>Editando mensagem</Text>
+              ) : null}
+              <TextInput
+                value={quickFormText}
+                onChangeText={setQuickFormText}
+                style={styles.quickFormInput}
+                placeholder="Digite a mensagem rápida"
+                placeholderTextColor="#8092a6"
+                multiline
+                numberOfLines={3}
+                maxLength={5000}
+                editable={!quickActionLoading}
+              />
+              <Pressable
+                style={[styles.quickSaveButton, quickActionLoading ? styles.quickSaveButtonDisabled : null]}
+                disabled={quickActionLoading}
+                onPress={() => void handleQuickSave()}
+              >
+                {quickActionLoading ? (
+                  <ActivityIndicator color="#fff" />
+                ) : (
+                  <Text style={styles.quickSaveButtonText}>
+                    {editingQuickMessageId ? 'Salvar edição' : 'Salvar mensagem'}
+                  </Text>
+                )}
+              </Pressable>
+            </View>
+
+            <ScrollView style={styles.quickList} contentContainerStyle={styles.quickListContent}>
+              {quickMessagesLoading ? (
+                <View style={styles.quickEmptyWrap}>
+                  <ActivityIndicator color={themeColors.primaryStrong} />
+                  <Text style={styles.quickEmptyText}>Carregando mensagens...</Text>
+                </View>
+              ) : null}
+
+              {!quickMessagesLoading && quickMessages.length === 0 ? (
+                <View style={styles.quickEmptyWrap}>
+                  <Text style={styles.quickEmptyText}>Nenhuma mensagem rápida cadastrada.</Text>
+                </View>
+              ) : null}
+
+              {!quickMessagesLoading ? quickMessages.map((item) => (
+                <View key={String(item.id)} style={styles.quickItemCard}>
+                  <Pressable
+                    onPress={() => handleQuickInsert(item)}
+                    style={styles.quickItemPick}
+                    disabled={quickActionLoading}
+                  >
+                    <Text numberOfLines={3} style={styles.quickItemText}>{item.content}</Text>
+                  </Pressable>
+                  <View style={styles.quickItemActions}>
+                    <Pressable
+                      style={styles.quickEditButton}
+                      onPress={() => handleQuickEdit(item)}
+                      disabled={quickActionLoading}
+                    >
+                      <Text style={styles.quickEditButtonText}>Editar</Text>
+                    </Pressable>
+                    <Pressable
+                      style={styles.quickDeleteButton}
+                      onPress={() => handleQuickDelete(item)}
+                      disabled={quickActionLoading}
+                    >
+                      <Ionicons name="trash-outline" size={16} color="#fff" />
+                    </Pressable>
+                  </View>
+                </View>
+              )) : null}
+            </ScrollView>
+          </Pressable>
+        </Pressable>
+      </Modal>
       <SelectorModal
         visible={showStatusSelector}
         title="Alterar status do ticket"
@@ -1292,13 +1858,13 @@ export function ChatScreen({ route, navigation }: ChatScreenProps) {
   );
 }
 
-const styles = StyleSheet.create({
+const lightStyles = StyleSheet.create({
   flex: { flex: 1 },
-  safeArea: { flex: 1, backgroundColor: colors.background },
-  container: { flex: 1, backgroundColor: colors.background },
+  safeArea: { flex: 1, backgroundColor: lightColors.background },
+  container: { flex: 1, backgroundColor: lightColors.background },
   header: {
     borderBottomWidth: 1,
-    borderColor: colors.border,
+    borderColor: lightColors.border,
     backgroundColor: '#fff',
     paddingHorizontal: 10,
     paddingVertical: 10,
@@ -1315,7 +1881,7 @@ const styles = StyleSheet.create({
     backgroundColor: '#e8f0fe',
   },
   backButtonText: {
-    color: colors.primaryStrong,
+    color: lightColors.primaryStrong,
     fontWeight: '800',
     fontSize: 16,
   },
@@ -1346,16 +1912,17 @@ const styles = StyleSheet.create({
     minWidth: 0,
   },
   headerTitle: {
-    color: colors.text,
+    color: lightColors.text,
     fontSize: 16,
     fontWeight: '700',
   },
   headerSubtitle: {
-    color: colors.muted,
+    color: lightColors.muted,
     fontSize: 12,
   },
   headerActions: {
     alignItems: 'flex-end',
+    gap: 6,
   },
   connectionBadge: {
     fontSize: 11,
@@ -1412,7 +1979,7 @@ const styles = StyleSheet.create({
     gap: 6,
   },
   ticketHistoryButtonText: {
-    color: colors.primaryStrong,
+    color: lightColors.primaryStrong,
     fontSize: 12,
     fontWeight: '700',
   },
@@ -1459,8 +2026,34 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
     gap: 10,
   },
+  messagesListWrap: {
+    flex: 1,
+  },
+  softLoadingWrap: {
+    position: 'absolute',
+    left: 0,
+    right: 0,
+    top: 8,
+    alignItems: 'center',
+  },
+  softLoadingChip: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+    borderWidth: 1,
+    borderColor: '#d2ddef',
+    backgroundColor: 'rgba(255,255,255,0.94)',
+    borderRadius: 999,
+    paddingHorizontal: 12,
+    paddingVertical: 6,
+  },
+  softLoadingText: {
+    color: lightColors.primaryStrong,
+    fontSize: 12,
+    fontWeight: '700',
+  },
   loadingText: {
-    color: colors.muted,
+    color: lightColors.muted,
     fontSize: 14,
   },
   messagesContent: {
@@ -1566,7 +2159,7 @@ const styles = StyleSheet.create({
     backgroundColor: '#000',
   },
   documentLabel: {
-    color: colors.primaryStrong,
+    color: lightColors.primaryStrong,
     fontSize: 13,
     textDecorationLine: 'underline',
   },
@@ -1604,7 +2197,7 @@ const styles = StyleSheet.create({
   },
   replyComposerTitle: {
     fontSize: 12,
-    color: colors.primaryStrong,
+    color: lightColors.primaryStrong,
     fontWeight: '700',
   },
   replyComposerValue: {
@@ -1676,7 +2269,7 @@ const styles = StyleSheet.create({
     paddingHorizontal: 6,
     paddingVertical: 9,
     backgroundColor: '#fff',
-    color: colors.text,
+    color: lightColors.text,
     fontSize: 15,
   },
   actionFab: {
@@ -1685,7 +2278,7 @@ const styles = StyleSheet.create({
     borderRadius: 24,
     alignItems: 'center',
     justifyContent: 'center',
-    backgroundColor: colors.primary,
+    backgroundColor: lightColors.primary,
     shadowColor: '#000',
     shadowOpacity: 0.16,
     shadowOffset: { width: 0, height: 2 },
@@ -1699,7 +2292,7 @@ const styles = StyleSheet.create({
     backgroundColor: '#2b6fdb',
   },
   sendFab: {
-    backgroundColor: colors.primaryStrong,
+    backgroundColor: lightColors.primaryStrong,
   },
   recordComposer: {
     flex: 1,
@@ -1742,7 +2335,7 @@ const styles = StyleSheet.create({
     borderRadius: 18,
     alignItems: 'center',
     justifyContent: 'center',
-    backgroundColor: colors.primaryStrong,
+    backgroundColor: lightColors.primaryStrong,
   },
   selectorOverlay: {
     flex: 1,
@@ -1789,7 +2382,377 @@ const styles = StyleSheet.create({
     fontWeight: '600',
   },
   selectorItemTextActive: {
-    color: colors.primaryStrong,
+    color: lightColors.primaryStrong,
     fontWeight: '700',
   },
+  quickOverlay: {
+    flex: 1,
+    backgroundColor: 'rgba(15, 23, 42, 0.5)',
+    justifyContent: 'flex-end',
+    paddingHorizontal: 10,
+    paddingBottom: 12,
+  },
+  quickSheet: {
+    maxHeight: '74%',
+    borderRadius: 16,
+    borderWidth: 1,
+    borderColor: '#dbe6f5',
+    backgroundColor: '#fff',
+    padding: 12,
+    gap: 10,
+  },
+  quickSheetHead: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+  },
+  quickSheetTitle: {
+    color: '#1f2f46',
+    fontSize: 18,
+    fontWeight: '800',
+  },
+  quickCloseButton: {
+    width: 34,
+    height: 34,
+    borderRadius: 10,
+    borderWidth: 1,
+    borderColor: '#d3e0f2',
+    backgroundColor: '#f4f8ff',
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  quickForm: {
+    borderWidth: 1,
+    borderColor: '#d6e3f4',
+    borderRadius: 12,
+    backgroundColor: '#f8fbff',
+    padding: 10,
+    gap: 8,
+  },
+  quickEditHint: {
+    color: '#446182',
+    fontSize: 12,
+    fontWeight: '700',
+  },
+  quickFormInput: {
+    borderWidth: 1,
+    borderColor: '#c8d8ee',
+    borderRadius: 10,
+    backgroundColor: '#fff',
+    color: lightColors.text,
+    minHeight: 56,
+    maxHeight: 140,
+    paddingHorizontal: 10,
+    paddingVertical: 8,
+    textAlignVertical: 'top',
+    fontSize: 14,
+    lineHeight: 20,
+  },
+  quickSaveButton: {
+    minHeight: 40,
+    borderRadius: 12,
+    borderWidth: 1,
+    borderColor: 'rgba(11,87,208,0.42)',
+    backgroundColor: lightColors.primaryStrong,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  quickSaveButtonDisabled: {
+    opacity: 0.65,
+  },
+  quickSaveButtonText: {
+    color: '#fff',
+    fontWeight: '800',
+    fontSize: 14,
+  },
+  quickList: {
+    maxHeight: 360,
+  },
+  quickListContent: {
+    gap: 8,
+    paddingBottom: 8,
+  },
+  quickEmptyWrap: {
+    borderWidth: 1,
+    borderStyle: 'dashed',
+    borderColor: '#cad9ed',
+    borderRadius: 12,
+    paddingVertical: 12,
+    paddingHorizontal: 10,
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 6,
+  },
+  quickEmptyText: {
+    color: '#617892',
+    fontSize: 13,
+    textAlign: 'center',
+  },
+  quickItemCard: {
+    borderWidth: 1,
+    borderColor: '#d9e6f7',
+    borderRadius: 12,
+    backgroundColor: '#f9fcff',
+    padding: 10,
+    gap: 8,
+  },
+  quickItemPick: {
+    borderRadius: 8,
+    paddingVertical: 2,
+  },
+  quickItemText: {
+    color: '#27445f',
+    fontSize: 14,
+    lineHeight: 19,
+  },
+  quickItemActions: {
+    flexDirection: 'row',
+    justifyContent: 'flex-end',
+    alignItems: 'center',
+    gap: 8,
+  },
+  quickEditButton: {
+    minHeight: 34,
+    borderRadius: 999,
+    borderWidth: 1,
+    borderColor: '#c8d8ee',
+    backgroundColor: '#fff',
+    paddingHorizontal: 14,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  quickEditButtonText: {
+    color: '#21466f',
+    fontWeight: '700',
+    fontSize: 12,
+  },
+  quickDeleteButton: {
+    width: 34,
+    height: 34,
+    borderRadius: 10,
+    backgroundColor: '#d92d20',
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
 });
+
+const darkStyles = StyleSheet.create({
+  safeArea: { backgroundColor: '#0b141a' },
+  container: { backgroundColor: '#0b141a' },
+  header: {
+    backgroundColor: '#111b21',
+    borderColor: '#223244',
+  },
+  backButton: {
+    backgroundColor: '#14293c',
+  },
+  backButtonText: {
+    color: '#c5daff',
+  },
+  contactAvatarWrap: {
+    backgroundColor: '#1c3246',
+  },
+  contactAvatarFallback: {
+    backgroundColor: '#243d53',
+  },
+  contactAvatarInitial: {
+    color: '#c6dbf5',
+  },
+  headerTitle: {
+    color: '#e9edef',
+  },
+  headerSubtitle: {
+    color: '#a1b5cb',
+  },
+  onlineBadge: {
+    color: '#73c1ff',
+    backgroundColor: '#16334f',
+  },
+  offlineBadge: {
+    color: '#ffaf8f',
+    backgroundColor: '#462821',
+  },
+  statusRow: {
+    borderColor: '#223244',
+    backgroundColor: '#111b21',
+  },
+  ticketHistoryRow: {
+    borderColor: '#223244',
+    backgroundColor: '#111b21',
+  },
+  ticketHistoryHint: {
+    color: '#a1b5cb',
+  },
+  ticketHistoryButton: {
+    borderColor: '#34506f',
+    backgroundColor: '#14293c',
+  },
+  ticketHistoryButtonText: {
+    color: '#c5daff',
+  },
+  dropdownLabel: {
+    color: '#8da6c0',
+  },
+  dropdownTrigger: {
+    borderColor: '#34506f',
+    backgroundColor: '#102636',
+  },
+  dropdownTriggerReadOnly: {
+    backgroundColor: '#1b3042',
+  },
+  dropdownValue: {
+    color: '#e9edef',
+  },
+  loadingText: {
+    color: '#a1b5cb',
+  },
+  softLoadingChip: {
+    borderColor: '#29435c',
+    backgroundColor: 'rgba(17,27,33,0.94)',
+  },
+  softLoadingText: {
+    color: '#9dc5ff',
+  },
+  bubbleClient: {
+    backgroundColor: '#202c33',
+  },
+  bubbleAgent: {
+    backgroundColor: '#005c4b',
+  },
+  bubbleSystem: {
+    backgroundColor: '#1c2a3a',
+  },
+  messageText: {
+    color: '#e9edef',
+  },
+  messageTime: {
+    color: '#93a7bc',
+  },
+  messageMediaWrap: {
+    backgroundColor: '#192834',
+  },
+  documentLabel: {
+    color: '#9dc5ff',
+  },
+  replyPreview: {
+    backgroundColor: 'rgba(233,237,239,0.08)',
+    borderLeftColor: '#53bdeb',
+  },
+  replyAuthor: {
+    color: '#8fe4d1',
+  },
+  replyText: {
+    color: '#c0d0de',
+  },
+  replyComposer: {
+    borderColor: '#223244',
+    backgroundColor: '#111b21',
+  },
+  replyComposerTitle: {
+    color: '#9dc5ff',
+  },
+  replyComposerValue: {
+    color: '#c0d0de',
+  },
+  composer: {
+    borderColor: '#223244',
+    backgroundColor: '#111b21',
+  },
+  readOnlyComposer: {
+    borderColor: '#29435c',
+    backgroundColor: '#162839',
+  },
+  readOnlyComposerText: {
+    color: '#c0d0de',
+  },
+  inputShell: {
+    borderColor: '#29435c',
+    backgroundColor: '#102636',
+  },
+  input: {
+    backgroundColor: '#102636',
+    color: '#e9edef',
+  },
+  micFab: {
+    backgroundColor: '#1f77ff',
+  },
+  sendFab: {
+    backgroundColor: '#1f77ff',
+  },
+  recordComposer: {
+    borderColor: '#29435c',
+    backgroundColor: '#102636',
+  },
+  recordingLabel: {
+    color: '#8fb6ff',
+  },
+  recordTimer: {
+    color: '#a1b5cb',
+  },
+  selectorSheet: {
+    backgroundColor: '#111b21',
+    borderColor: '#29435c',
+  },
+  selectorTitle: {
+    color: '#e9edef',
+  },
+  selectorItem: {
+    borderColor: '#29435c',
+    backgroundColor: '#102636',
+  },
+  selectorItemActive: {
+    borderColor: '#3c5d82',
+    backgroundColor: '#16334f',
+  },
+  selectorItemText: {
+    color: '#d6e3f0',
+  },
+  selectorItemTextActive: {
+    color: '#8fb6ff',
+  },
+  quickSheet: {
+    borderColor: '#29435c',
+    backgroundColor: '#111b21',
+  },
+  quickSheetTitle: {
+    color: '#e9edef',
+  },
+  quickCloseButton: {
+    borderColor: '#34506f',
+    backgroundColor: '#14293c',
+  },
+  quickForm: {
+    borderColor: '#29435c',
+    backgroundColor: '#102636',
+  },
+  quickEditHint: {
+    color: '#9eb4ca',
+  },
+  quickFormInput: {
+    borderColor: '#34506f',
+    backgroundColor: '#0b2438',
+    color: '#e9edef',
+  },
+  quickEmptyWrap: {
+    borderColor: '#34506f',
+  },
+  quickEmptyText: {
+    color: '#a1b5cb',
+  },
+  quickItemCard: {
+    borderColor: '#29435c',
+    backgroundColor: '#102636',
+  },
+  quickItemText: {
+    color: '#d6e3f0',
+  },
+  quickEditButton: {
+    borderColor: '#34506f',
+    backgroundColor: '#14293c',
+  },
+  quickEditButtonText: {
+    color: '#c5daff',
+  },
+});
+
+runtimeStyles = lightStyles;

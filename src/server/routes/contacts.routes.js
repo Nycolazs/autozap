@@ -7,7 +7,8 @@ const axios = require('axios');
 const profilePicCache = new Map(); // phone -> { url, expiresAt }
 const profilePicInFlight = new Map(); // phone -> Promise<{url}>
 let activeProfilePicFetches = 0;
-const MAX_PROFILE_PIC_FETCHES = Number(process.env.MAX_PROFILE_PIC_FETCHES || 3);
+const profilePicFetchQueue = [];
+const MAX_PROFILE_PIC_FETCHES = Math.max(1, Number(process.env.MAX_PROFILE_PIC_FETCHES || 3));
 const PROFILE_PIC_TTL_MS = Number(process.env.PROFILE_PIC_TTL_MS || 6 * 60 * 60 * 1000); // 6h
 const PROFILE_PIC_NULL_TTL_MS = Number(process.env.PROFILE_PIC_NULL_TTL_MS || 15 * 60 * 1000); // 15m
 const PROFILE_PIC_REMOTE_FETCH_TIMEOUT_MS = Number(process.env.PROFILE_PIC_REMOTE_FETCH_TIMEOUT_MS || 9000);
@@ -18,14 +19,30 @@ function normalizePhone(phone) {
 }
 
 async function withProfilePicConcurrencyLimit(fn) {
-  while (activeProfilePicFetches >= MAX_PROFILE_PIC_FETCHES) {
-    await new Promise((r) => setTimeout(r, 50));
-  }
-  activeProfilePicFetches++;
+  const release = await new Promise((resolve) => {
+    const grant = () => {
+      activeProfilePicFetches += 1;
+      resolve(() => {
+        activeProfilePicFetches = Math.max(0, activeProfilePicFetches - 1);
+        const next = profilePicFetchQueue.shift();
+        if (typeof next === 'function') {
+          next();
+        }
+      });
+    };
+
+    if (activeProfilePicFetches < MAX_PROFILE_PIC_FETCHES) {
+      grant();
+      return;
+    }
+
+    profilePicFetchQueue.push(grant);
+  });
+
   try {
     return await fn();
   } finally {
-    activeProfilePicFetches--;
+    release();
   }
 }
 
@@ -75,10 +92,20 @@ function createContactsRouter({
 
   function cacheProfilePicture(phone, url, ttlMs) {
     if (!phone) return;
+    const candidateUrl = String(url || '').trim();
+    const normalizedUrl = /^\/(?:__api\/)?profile-picture\/[^/]+\/image(?:\?.*)?$/i.test(candidateUrl)
+      ? null
+      : (candidateUrl || null);
     profilePicCache.set(phone, {
-      url: url || null,
+      url: normalizedUrl,
       expiresAt: Date.now() + Number(ttlMs || PROFILE_PIC_TTL_MS),
     });
+  }
+
+  function profilePictureImageUrl(phone) {
+    const normalized = normalizePhone(phone);
+    if (!normalized) return null;
+    return `/profile-picture/${encodeURIComponent(normalized)}/image`;
   }
 
   function findPersistedProfilePicture(phone) {
@@ -236,8 +263,8 @@ function createContactsRouter({
       if (/^https?:\/\//i.test(value)) {
         const localUrl = await cacheRemoteProfilePictureLocally(key, value);
         if (localUrl) return localUrl;
-        // Fallback robusto: usa endpoint autenticado para evitar CORS/assinatura expirada.
-        return `/profile-picture/${encodeURIComponent(key)}/image`;
+        // Mantém URL remota para o endpoint /image fazer proxy autenticado.
+        return value;
       }
       return null;
     };
@@ -324,6 +351,7 @@ function createContactsRouter({
     if (!key) {
       return res.json({ url: null, fromCache: false, reason: 'invalid_phone' });
     }
+    const imageUrl = profilePictureImageUrl(key);
 
     const now = Date.now();
     const persisted = findPersistedProfilePicture(key);
@@ -332,13 +360,13 @@ function createContactsRouter({
     // Para arquivo local já cacheado, responde instantaneamente.
     if (!forceRefresh && persisted && persisted.url && String(persisted.url).startsWith('/media/profiles/')) {
       cacheProfilePicture(key, persisted.url, PROFILE_PIC_TTL_MS);
-      return res.json({ url: persisted.url, fromCache: false, fromDb: true, source: persisted.source || 'db' });
+      return res.json({ url: imageUrl, fromCache: false, fromDb: true, source: persisted.source || 'db' });
     }
 
     const cached = !forceRefresh ? profilePicCache.get(key) : null;
     if (cached && cached.expiresAt && cached.expiresAt > now) {
       return res.json({
-        url: cached.url || null,
+        url: cached.url ? imageUrl : null,
         fromCache: true,
         reason: cached.url ? null : 'cached_not_available',
       });
@@ -352,7 +380,16 @@ function createContactsRouter({
           new Promise((resolve) => setTimeout(() => resolve(null), FAST_LOOKUP_WAIT_MS)),
         ]);
         if (fastResult && fastResult.url) {
-          return res.json({ url: fastResult.url, fromCache: false, source: fastResult.source || null });
+          return res.json({ url: imageUrl, fromCache: false, source: fastResult.source || null });
+        }
+        if (persisted && persisted.url) {
+          return res.json({
+            url: imageUrl,
+            fromCache: false,
+            pending: true,
+            source: persisted.source || null,
+            reason: fastResult && fastResult.reason ? String(fastResult.reason) : null,
+          });
         }
         return res.json({
           url: null,
@@ -363,7 +400,7 @@ function createContactsRouter({
       }
       const result = await existing;
       return res.json({
-        url: result.url || null,
+        url: result.url ? imageUrl : (persisted && persisted.url ? imageUrl : null),
         fromCache: false,
         source: result.source || null,
         reason: result.url ? null : (result.reason ? String(result.reason) : null),
@@ -378,7 +415,16 @@ function createContactsRouter({
         new Promise((resolve) => setTimeout(() => resolve(null), FAST_LOOKUP_WAIT_MS)),
       ]);
       if (fastResult && fastResult.url) {
-        return res.json({ url: fastResult.url, fromCache: false, source: fastResult.source || null });
+        return res.json({ url: imageUrl, fromCache: false, source: fastResult.source || null });
+      }
+      if (persisted && persisted.url) {
+        return res.json({
+          url: imageUrl,
+          fromCache: false,
+          pending: true,
+          source: persisted.source || null,
+          reason: fastResult && fastResult.reason ? String(fastResult.reason) : null,
+        });
       }
       return res.json({
         url: null,
@@ -390,10 +436,12 @@ function createContactsRouter({
 
     const result = await fetchProfilePictureFromProvider(key, persisted);
     return res.json({
-      url: result.url || null,
+      url: result.url ? imageUrl : (persisted && persisted.url ? imageUrl : null),
       fromCache: false,
       source: result.source || null,
-      reason: result.url ? null : (result.reason ? String(result.reason) : null),
+      reason: result.url
+        ? null
+        : (result.reason ? String(result.reason) : null),
     });
   });
 
@@ -401,6 +449,7 @@ function createContactsRouter({
   router.get('/profile-picture/:phone/image', authGuard, async (req, res) => {
     const key = normalizePhone(req.params && req.params.phone);
     const forceRefresh = String((req.query && req.query.refresh) || '').trim() === '1';
+    const recursiveLookupPattern = /^\/(?:__api\/)?profile-picture\/[^/]+\/image(?:\?.*)?$/i;
     if (!key) {
       return res.status(404).json({ error: 'Contato inválido' });
     }
@@ -408,10 +457,16 @@ function createContactsRouter({
     try {
       let persisted = findPersistedProfilePicture(key);
       let candidateUrl = persisted && persisted.url ? String(persisted.url).trim() : '';
+      if (recursiveLookupPattern.test(candidateUrl)) {
+        candidateUrl = '';
+      }
 
       if (!candidateUrl || forceRefresh) {
         const fetched = await fetchProfilePictureFromProvider(key, persisted);
         candidateUrl = String((fetched && fetched.url) || '').trim();
+        if (recursiveLookupPattern.test(candidateUrl)) {
+          candidateUrl = '';
+        }
       }
 
       if (!candidateUrl) {
@@ -452,6 +507,23 @@ function createContactsRouter({
             res.setHeader('Content-Type', contentType);
           }
           return res.status(200).send(Buffer.from(response.data));
+        }
+
+        const refreshed = await fetchProfilePictureFromProvider(key, persisted);
+        const refreshedUrl = String((refreshed && refreshed.url) || '').trim();
+        const sameUrl = refreshedUrl && refreshedUrl === candidateUrl;
+        const recursiveLookup = recursiveLookupPattern.test(refreshedUrl);
+        if (refreshedUrl && !sameUrl && !recursiveLookup) {
+          if (refreshedUrl.startsWith('/media/profiles/')) {
+            const sent = sendLocalProfileFile(res, refreshedUrl);
+            if (sent) return sent;
+          } else if (/^https?:\/\//i.test(refreshedUrl)) {
+            const nextLocalUrl = await cacheRemoteProfilePictureLocally(key, refreshedUrl);
+            if (nextLocalUrl) {
+              const sent = sendLocalProfileFile(res, nextLocalUrl);
+              if (sent) return sent;
+            }
+          }
         }
       }
 

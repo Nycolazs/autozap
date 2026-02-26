@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import { formatTime, resolveProfilePictureUrl } from '@/src/frontend/lib/runtime';
+import { formatDate, formatTime, resolveProfilePictureUrl } from '@/src/frontend/lib/runtime';
 import { ThemeToggle } from '@/src/frontend/components/system/ThemeToggle';
 import type { Ticket } from '@/src/frontend/types/chat';
 import styles from '@/src/frontend/components/chat/chat.module.css';
@@ -23,7 +23,7 @@ type TicketListProps = {
 function statusLabel(status: Ticket['status']): string {
   if (status === 'pendente') return 'Pendente';
   if (status === 'aguardando') return 'Aguardando';
-  if (status === 'em_atendimento') return 'Em atendimento';
+  if (status === 'em_atendimento') return 'Em Atendimento';
   if (status === 'encerrado') return 'Encerrado';
   return 'Resolvido';
 }
@@ -164,13 +164,19 @@ export function TicketList({
                 )}
               </span>
               <span className={styles.ticketMain}>
-                <span className={styles.ticketName}>{displayName(ticket)}</span>
-                <span className={styles.ticketPhone}>{ticket.phone}</span>
+                <span className={styles.ticketHeading}>
+                  <span className={styles.ticketName}>{displayName(ticket)}</span>
+                  <span className={styles.ticketPhoneDivider} aria-hidden="true">•</span>
+                  <span className={styles.ticketPhone}>{ticket.phone}</span>
+                </span>
                 <span className={styles.ticketMeta}>
                   <span className={`${styles.statusBadge} ${statusClass(ticket.status)}`}>
                     {statusLabel(ticket.status)}
                   </span>
-                  <span className={styles.ticketTime}>{formatTime(ticket.updated_at)}</span>
+                  <span className={styles.ticketDateTime}>
+                    <span className={styles.ticketDate}>{formatDate(ticket.updated_at)}</span>
+                    <span className={styles.ticketTime}>{formatTime(ticket.updated_at)}</span>
+                  </span>
                 </span>
               </span>
             </button>

@@ -11,9 +11,10 @@ type SidebarItem = {
 
 const ITEMS: SidebarItem[] = [
   { key: 'users', title: 'Usuários e papéis', hint: 'Perfis e permissões', icon: '👥' },
-  { key: 'tickets', title: 'Tickets', hint: 'Distribuição de atendimento', icon: '🎫' },
+  { key: 'tickets', title: 'Todos os tickets', hint: 'Busca, filtros e atendimento', icon: '🎫' },
   { key: 'blacklist', title: 'Blacklist', hint: 'Contatos bloqueados', icon: '⛔' },
   { key: 'hours', title: 'Horário comercial', hint: 'Agenda e exceções', icon: '🕒' },
+  { key: 'welcome', title: 'Boas-vindas', hint: 'Mensagem automática em expediente', icon: '👋' },
   { key: 'await', title: 'Aguardando automático', hint: 'Regra de retorno', icon: '⏳' },
   { key: 'ranking', title: 'Ranking', hint: 'Performance de vendedores', icon: '📈' },
 ];

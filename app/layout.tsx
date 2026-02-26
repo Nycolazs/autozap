@@ -34,8 +34,32 @@ export default function RootLayout({ children }: RootLayoutProps) {
 
   return (
     <html lang="pt-BR" suppressHydrationWarning>
-      <body suppressHydrationWarning>
+      <head>
+        <meta name="color-scheme" content="dark light" />
         <script dangerouslySetInnerHTML={{ __html: themeInitScript }} />
+        <style
+          dangerouslySetInnerHTML={{
+            __html: `
+              html, body {
+                margin: 0;
+                padding: 0;
+                min-height: 100%;
+                background: #09111c;
+                color: #e2ecf8;
+              }
+              html[data-theme='dark'], html[data-theme='dark'] body {
+                background: #09111c;
+                color: #e2ecf8;
+              }
+              html[data-theme='light'], html[data-theme='light'] body {
+                background: #e9eff7;
+                color: #102a43;
+              }
+            `,
+          }}
+        />
+      </head>
+      <body suppressHydrationWarning>
         <NativeSystemUi />
         {children}
       </body>

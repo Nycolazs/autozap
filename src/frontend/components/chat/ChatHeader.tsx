@@ -22,7 +22,7 @@ type ChatHeaderProps = {
 function statusLabel(status: Ticket['status']): string {
   if (status === 'pendente') return 'Pendente';
   if (status === 'aguardando') return 'Aguardando';
-  if (status === 'em_atendimento') return 'Em atendimento';
+  if (status === 'em_atendimento') return 'Em Atendimento';
   if (status === 'resolvido') return 'Resolvido';
   return 'Encerrado';
 }

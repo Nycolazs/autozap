@@ -1639,9 +1639,98 @@ function createTicketsRouter({
   // Buscar todos os tickets com informações do vendedor (apenas admin)
   router.get('/admin/tickets', requireAdmin, (req, res) => {
     try {
+      const normalizeTicketStatus = (value) => {
+        const raw = String(value || '').trim().toLowerCase();
+        if (!raw) return '';
+        const normalized = raw
+          .normalize('NFD')
+          .replace(/[\u0300-\u036f]/g, '')
+          .replace(/[\s-]+/g, '_');
+        if (normalized === 'em_atendimento' || normalized === 'ematendimento') return 'em_atendimento';
+        if (normalized === 'pendente') return 'pendente';
+        if (normalized === 'aguardando') return 'aguardando';
+        if (normalized === 'resolvido') return 'resolvido';
+        if (normalized === 'encerrado') return 'encerrado';
+        return normalized;
+      };
+
       const limit = Math.min(Math.max(parseInt(req.query.limit, 10) || 200, 1), 500);
       const offset = Math.max(parseInt(req.query.offset, 10) || 0, 0);
       const includeAll = String(req.query.includeAll || '') === '1';
+      const sellerFilterRaw = String(req.query.sellerId || req.query.seller_id || req.query.assigned_to || '').trim();
+      const statusFilterRaw = normalizeTicketStatus(req.query.status);
+      const startDateRaw = String(req.query.startDate || req.query.fromDate || '').trim();
+      const endDateRaw = String(req.query.endDate || req.query.toDate || '').trim();
+
+      let sellerFilterMode = 'all';
+      let sellerFilterId = null;
+      if (sellerFilterRaw) {
+        if (sellerFilterRaw === '__unassigned__' || sellerFilterRaw === 'null' || sellerFilterRaw === 'none' || sellerFilterRaw === '0') {
+          sellerFilterMode = 'unassigned';
+        } else {
+          const parsedSellerId = Number(sellerFilterRaw);
+          if (!Number.isFinite(parsedSellerId) || parsedSellerId <= 0) {
+            return res.status(400).json({ error: 'sellerId inválido' });
+          }
+          sellerFilterMode = 'seller';
+          sellerFilterId = parsedSellerId;
+        }
+      }
+
+      const isIsoDate = (value) => /^\d{4}-\d{2}-\d{2}$/.test(value);
+      if (startDateRaw && !isIsoDate(startDateRaw)) {
+        return res.status(400).json({ error: 'startDate inválida. Use YYYY-MM-DD.' });
+      }
+      if (endDateRaw && !isIsoDate(endDateRaw)) {
+        return res.status(400).json({ error: 'endDate inválida. Use YYYY-MM-DD.' });
+      }
+      if (startDateRaw && endDateRaw && startDateRaw > endDateRaw) {
+        return res.status(400).json({ error: 'Data inicial não pode ser maior que a final' });
+      }
+
+      const allowedStatus = new Set(['pendente', 'aguardando', 'em_atendimento', 'resolvido', 'encerrado']);
+      if (statusFilterRaw && !allowedStatus.has(statusFilterRaw)) {
+        return res.status(400).json({ error: 'status inválido' });
+      }
+
+      const whereClauses = [];
+      const params = [];
+
+      if (!includeAll) {
+        whereClauses.push(`
+          (
+            t.phone IS NOT NULL
+            AND t.phone != ''
+            AND t.phone NOT LIKE '%@%'
+            AND t.phone NOT GLOB '*[^0-9]*'
+            AND length(t.phone) BETWEEN 8 AND 25
+          )
+        `);
+      }
+
+      if (sellerFilterMode === 'unassigned') {
+        whereClauses.push('t.seller_id IS NULL');
+      } else if (sellerFilterMode === 'seller') {
+        whereClauses.push('t.seller_id = ?');
+        params.push(sellerFilterId);
+      }
+
+      if (statusFilterRaw) {
+        whereClauses.push("replace(replace(lower(trim(COALESCE(t.status, ''))), ' ', '_'), '-', '_') = ?");
+        params.push(statusFilterRaw);
+      }
+
+      if (startDateRaw) {
+        whereClauses.push("date(COALESCE(t.updated_at, t.created_at)) >= date(?)");
+        params.push(startDateRaw);
+      }
+
+      if (endDateRaw) {
+        whereClauses.push("date(COALESCE(t.updated_at, t.created_at)) <= date(?)");
+        params.push(endDateRaw);
+      }
+
+      const whereSql = whereClauses.length ? `WHERE ${whereClauses.join(' AND ')}` : '';
 
       const tickets = db.prepare(`
         SELECT t.*,
@@ -1654,10 +1743,10 @@ function createTicketsRouter({
         FROM tickets t
         LEFT JOIN sellers s ON t.seller_id = s.id
         LEFT JOIN contact_profiles cp ON cp.phone = t.phone
-        ${includeAll ? '' : "WHERE (t.phone IS NOT NULL AND t.phone != '' AND t.phone NOT LIKE '%@%' AND t.phone NOT GLOB '*[^0-9]*' AND length(t.phone) BETWEEN 8 AND 25)"}
+        ${whereSql}
         ORDER BY t.updated_at DESC
         LIMIT ? OFFSET ?
-      `).all(limit, offset);
+      `).all(...params, limit, offset);
 
       return res.json(tickets);
     } catch (_error) {

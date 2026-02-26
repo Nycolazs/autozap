@@ -1,4 +1,4 @@
-export type AdminSectionKey = 'users' | 'tickets' | 'blacklist' | 'hours' | 'await' | 'ranking';
+export type AdminSectionKey = 'users' | 'tickets' | 'blacklist' | 'hours' | 'welcome' | 'await' | 'ranking';
 
 export interface AdminUser {
   id: string;
@@ -48,6 +48,11 @@ export interface BusinessException {
 }
 
 export interface BusinessMessage {
+  message: string;
+  enabled: boolean;
+}
+
+export interface WelcomeMessage {
   message: string;
   enabled: boolean;
 }

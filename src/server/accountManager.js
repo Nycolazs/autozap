@@ -10,6 +10,9 @@ const ACCOUNTS_DIR = path.join(DATA_DIR, 'accounts');
 const ACTIVE_ACCOUNT_FILE = path.join(DATA_DIR, 'active-account.json');
 const STAGING_DIR = path.join(DATA_DIR, 'staging');
 const STAGING_AUTH_DIR = path.join(STAGING_DIR, 'wa-auth');
+const DEFAULT_DB_DIR = path.join(DATA_DIR, 'db');
+const DEFAULT_DB_PATH = path.join(DEFAULT_DB_DIR, 'db.sqlite');
+const DEFAULT_SESSIONS_PATH = path.join(DEFAULT_DB_DIR, 'sessions.db');
 
 // Legacy locations (v1)
 const LEGACY_DATA_DIR = path.join(ROOT_DIR, 'data');
@@ -315,9 +318,10 @@ function getDbPathForActiveOrDefault() {
     return paths.dbPath;
   }
 
-  // Fallback (keeps old behavior until first successful WhatsApp login)
-  ensureDir(LEGACY_DB_DIR);
-  return LEGACY_DB_PATH;
+  // Fallback for first-run before any account is selected.
+  // Use writable app data path instead of legacy project path (can be read-only in packaged app).
+  ensureDir(DEFAULT_DB_DIR);
+  return DEFAULT_DB_PATH;
 }
 
 function getSessionsPathForActiveOrDefault() {
@@ -327,8 +331,8 @@ function getSessionsPathForActiveOrDefault() {
     return paths.sessionsPath;
   }
 
-  ensureDir(LEGACY_DB_DIR);
-  return LEGACY_SESSIONS_PATH;
+  ensureDir(DEFAULT_DB_DIR);
+  return DEFAULT_SESSIONS_PATH;
 }
 
 function activateAccountFromConnectedWhatsApp(account, authPathUsed) {

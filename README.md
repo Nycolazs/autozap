@@ -111,25 +111,62 @@ npm run desktop:config:cloud
 
 ## Atualização automática (GitHub Releases)
 
-Ao iniciar o desktop, o app verifica a última release no GitHub e, quando encontra versão mais nova, mostra popup e inicia o download automaticamente.
+Ao iniciar o desktop, o app verifica a última release no GitHub e, quando encontra versão mais nova, baixa automaticamente o instalador e tenta abrir o instalador sozinho (`.exe` no Windows, `.dmg` no macOS).
 
 Configurações opcionais no `.env`:
 
 - `AUTOZAP_AUTO_UPDATE_ENABLED=1` (default: ligado)
 - `AUTOZAP_UPDATE_REPO=Nycolazs/autozap`
 - `AUTOZAP_UPDATE_CHECK_DELAY_MS=10000`
+- `AUTOZAP_AUTO_LAUNCH_INSTALLER=1` (default: ligado)
+- `AUTOZAP_UPDATE_SILENT=0` (default: desligado)
+- `AUTOZAP_UPDATE_ALLOW_PRERELEASE=0` (default: desligado)
 
 O instalador baixado é salvo em:
 
 - macOS/Windows: pasta de downloads do usuário, subpasta `AutoZap-updates`.
 
-## CI para Windows x64
+Para publicar novas atualizações, gere uma nova versão e uma nova tag:
+
+```bash
+npm version patch
+git push origin main --follow-tags
+```
+
+## CI de release desktop (macOS + Windows)
 
 Workflow incluído:
 
-- `.github/workflows/windows-x64.yml`
+- `.github/workflows/desktop-release.yml`
 
-Ele gera build Windows x64 (`.exe` + `.zip`) via GitHub Actions e publica assets automaticamente em tags `v*`.
+Ele gera build macOS x64 (`.dmg` + `.zip`) e Windows x64 (`.exe` + `.zip`) via GitHub Actions e publica os assets automaticamente em tags `v*`.
+
+### Notarização macOS (Apple Developer)
+
+Para o `.dmg` sair assinado/notarizado automaticamente no workflow, configure os seguintes secrets no GitHub:
+
+- `CSC_LINK`: certificado `Developer ID Application` em base64 (`.p12`)
+- `CSC_KEY_PASSWORD`: senha do `.p12`
+- `APPLE_API_KEY_ID`: Key ID da API Key do App Store Connect
+- `APPLE_API_ISSUER`: Issuer ID da API Key
+- `APPLE_API_KEY_P8`: conteúdo do arquivo `.p8` (texto completo)
+
+O workflow detecta esses secrets:
+
+- se existir tudo, ele assina + notariza + valida com `stapler`;
+- se faltar algo, ele gera build macOS sem assinatura/notarização.
+
+Pré-requisitos locais para notarização manual no macOS:
+
+- Xcode completo instalado (não apenas Command Line Tools)
+- certificado `Developer ID Application` instalado no Keychain com chave privada
+
+Comandos úteis para validar no seu Mac:
+
+```bash
+security find-identity -v -p codesigning
+xcrun notarytool --version
+```
 
 ## Webhook oficial (Meta) sem VPS
 

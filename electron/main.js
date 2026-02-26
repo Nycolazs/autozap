@@ -1,5 +1,9 @@
 'use strict';
 
+if (!process.env.NODE_ENV) {
+  process.env.NODE_ENV = 'production';
+}
+
 const fs = require('fs');
 const os = require('os');
 const path = require('path');
@@ -114,7 +118,10 @@ function isAutoUpdateEnabled() {
 }
 
 async function fetchLatestRelease(repo) {
-  const url = `https://api.github.com/repos/${repo}/releases/latest`;
+  const allowPreRelease = parseBoolean(process.env.AUTOZAP_UPDATE_ALLOW_PRERELEASE) === true;
+  const url = allowPreRelease
+    ? `https://api.github.com/repos/${repo}/releases?per_page=15`
+    : `https://api.github.com/repos/${repo}/releases/latest`;
   const response = await fetch(url, {
     method: 'GET',
     headers: {
@@ -129,7 +136,21 @@ async function fetchLatestRelease(repo) {
     throw new Error(`GitHub API retornou ${response.status}`);
   }
 
-  return response.json();
+  const payload = await response.json();
+  if (!allowPreRelease) {
+    return payload;
+  }
+
+  const releases = Array.isArray(payload) ? payload : [];
+  const candidate = releases.find((release) => {
+    if (!release || release.draft) return false;
+    return true;
+  });
+
+  if (!candidate) {
+    throw new Error('Nenhuma release disponível para atualização automática');
+  }
+  return candidate;
 }
 
 function scoreReleaseAsset(asset) {
@@ -253,16 +274,26 @@ async function checkForUpdatesAndDownload() {
     const bestAsset = selectBestReleaseAsset(release);
     const releasePage = String((release && release.html_url) || `https://github.com/${repo}/releases/latest`);
 
-    await dialog.showMessageBox(mainWindow || null, {
-      type: 'info',
-      title: 'Atualização disponível',
-      message: `Nova versão do AutoZap disponível (v${latestVersion})`,
-      detail: `Versão atual: v${currentVersion}\nO download da atualização será iniciado automaticamente.`,
-      buttons: ['OK'],
-      defaultId: 0,
-    });
+    const silent = parseBoolean(process.env.AUTOZAP_UPDATE_SILENT) === true;
+    const autoLaunchInstaller = parseBoolean(process.env.AUTOZAP_AUTO_LAUNCH_INSTALLER);
+    const shouldAutoLaunchInstaller = autoLaunchInstaller == null ? true : autoLaunchInstaller;
+
+    if (!silent) {
+      await dialog.showMessageBox(mainWindow || null, {
+        type: 'info',
+        title: 'Atualização disponível',
+        message: `Nova versão do AutoZap disponível (v${latestVersion})`,
+        detail: `Versão atual: v${currentVersion}\nO download da atualização será iniciado automaticamente.`,
+        buttons: ['OK'],
+        defaultId: 0,
+      });
+    }
 
     if (!bestAsset) {
+      if (silent) {
+        shell.openExternal(releasePage);
+        return;
+      }
       await dialog.showMessageBox(mainWindow || null, {
         type: 'warning',
         title: 'Atualização encontrada',
@@ -278,6 +309,47 @@ async function checkForUpdatesAndDownload() {
 
     const downloadedPath = await downloadAssetToDisk(bestAsset);
     if (!downloadedPath) return;
+
+    if (shouldAutoLaunchInstaller) {
+      const openErr = await shell.openPath(downloadedPath);
+      if (!openErr) {
+        if (!silent) {
+          await dialog.showMessageBox(mainWindow || null, {
+            type: 'info',
+            title: 'Atualização baixada',
+            message: `Atualização v${latestVersion} baixada com sucesso.`,
+            detail: 'O instalador foi aberto automaticamente.',
+            buttons: ['OK'],
+            defaultId: 0,
+          });
+        }
+        return;
+      }
+
+      if (silent) {
+        shell.showItemInFolder(downloadedPath);
+        return;
+      }
+
+      await dialog.showMessageBox(mainWindow || null, {
+        type: 'warning',
+        title: 'Não foi possível abrir o instalador',
+        message: 'A atualização foi baixada, mas não foi possível abrir automaticamente.',
+        detail: openErr,
+        buttons: ['Abrir pasta', 'Abrir releases', 'Fechar'],
+        defaultId: 0,
+        cancelId: 2,
+      }).then(({ response }) => {
+        if (response === 0) shell.showItemInFolder(downloadedPath);
+        if (response === 1) shell.openExternal(releasePage);
+      });
+      return;
+    }
+
+    if (silent) {
+      shell.showItemInFolder(downloadedPath);
+      return;
+    }
 
     const result = await dialog.showMessageBox(mainWindow || null, {
       type: 'info',
@@ -506,6 +578,102 @@ function scheduleMainWindowRecovery(reason) {
   }, 1200);
 }
 
+function buildStartupErrorPage(targetUrl, error) {
+  const safeUrl = String(targetUrl || '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+  const safeError = String(error && error.message ? error.message : error || 'Falha desconhecida')
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;');
+
+  return `<!doctype html>
+<html lang="pt-BR">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <title>AutoZap - Falha de conexão</title>
+  <style>
+    :root { color-scheme: dark; }
+    body {
+      margin: 0;
+      min-height: 100vh;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      background: #08101b;
+      color: #d6e7ff;
+      font-family: -apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;
+      padding: 18px;
+    }
+    .card {
+      width: min(560px, 100%);
+      border: 1px solid #2f4f73;
+      border-radius: 14px;
+      background: #122339;
+      box-shadow: 0 14px 32px rgba(0,0,0,0.35);
+      padding: 18px;
+    }
+    h1 { margin: 0 0 10px; font-size: 22px; }
+    p { margin: 0 0 10px; color: #a9c2e0; line-height: 1.5; }
+    .meta { font-size: 12px; color: #8ea9c9; word-break: break-word; }
+    .actions { display: flex; gap: 10px; margin-top: 14px; }
+    button {
+      border: 1px solid #416892;
+      border-radius: 10px;
+      background: #1d3c5f;
+      color: #d8ebff;
+      height: 38px;
+      padding: 0 14px;
+      font-weight: 700;
+      cursor: pointer;
+    }
+    button.primary {
+      border-color: #5f9ded;
+      background: linear-gradient(180deg, #3f8ef4 0%, #2b6dcb 100%);
+      color: #fff;
+    }
+  </style>
+</head>
+<body>
+  <div class="card">
+    <h1>Não foi possível abrir o AutoZap</h1>
+    <p>O aplicativo não conseguiu carregar o servidor configurado.</p>
+    <p class="meta"><strong>URL:</strong> ${safeUrl}</p>
+    <p class="meta"><strong>Erro:</strong> ${safeError}</p>
+    <div class="actions">
+      <button class="primary" onclick="location.href='${safeUrl}'">Tentar novamente</button>
+      <button onclick="location.reload()">Recarregar tela</button>
+    </div>
+  </div>
+</body>
+</html>`;
+}
+
+async function loadInitialUrlWithRetry(win, initialUrl) {
+  const maxAttempts = Math.max(1, Number(process.env.AUTOZAP_INITIAL_LOAD_RETRIES || 25));
+  const retryDelayMs = Math.max(250, Number(process.env.AUTOZAP_INITIAL_LOAD_RETRY_DELAY_MS || 900));
+
+  let lastError = null;
+  for (let attempt = 1; attempt <= maxAttempts; attempt += 1) {
+    if (!win || win.isDestroyed()) {
+      throw new Error('Janela principal indisponível durante carregamento inicial');
+    }
+
+    try {
+      await win.loadURL(initialUrl);
+      return;
+    } catch (err) {
+      lastError = err;
+      const reason = err && err.message ? err.message : String(err || 'erro desconhecido');
+      console.warn(`[electron] tentativa ${attempt}/${maxAttempts} falhou ao carregar ${initialUrl}: ${reason}`);
+      if (attempt < maxAttempts) {
+        await wait(retryDelayMs);
+      }
+    }
+  }
+
+  throw (lastError || new Error(`Falha ao carregar URL inicial: ${initialUrl}`));
+}
+
 async function createMainWindow() {
   if (mainWindow && !mainWindow.isDestroyed()) {
     try {
@@ -530,9 +698,21 @@ async function createMainWindow() {
     },
   });
 
-  mainWindow.once('ready-to-show', () => {
-    try { mainWindow.show(); } catch (_) {}
-  });
+  const safeShowMainWindow = () => {
+    if (!mainWindow || mainWindow.isDestroyed()) return;
+    try {
+      if (!mainWindow.isVisible()) {
+        mainWindow.show();
+      }
+    } catch (_) {}
+  };
+
+  mainWindow.once('ready-to-show', safeShowMainWindow);
+  mainWindow.webContents.on('did-finish-load', safeShowMainWindow);
+  const delayedShowTimer = setTimeout(safeShowMainWindow, 1800);
+  if (delayedShowTimer && typeof delayedShowTimer.unref === 'function') {
+    delayedShowTimer.unref();
+  }
 
   mainWindow.webContents.setWindowOpenHandler(({ url }) => {
     shell.openExternal(url);
@@ -584,7 +764,15 @@ async function createMainWindow() {
     }
   }
 
-  await mainWindow.loadURL(`${runtimeConfig.serverUrl}/login`);
+  const initialUrl = `${runtimeConfig.serverUrl}/login`;
+  try {
+    await loadInitialUrlWithRetry(mainWindow, initialUrl);
+  } catch (err) {
+    console.error('[electron] erro ao carregar tela inicial:', err && err.message ? err.message : err);
+    const fallbackHtml = buildStartupErrorPage(initialUrl, err);
+    const fallbackUrl = `data:text/html;charset=utf-8,${encodeURIComponent(fallbackHtml)}`;
+    await mainWindow.loadURL(fallbackUrl);
+  }
 }
 
 async function startDesktop() {
@@ -625,9 +813,18 @@ process.on('unhandledRejection', (reason) => {
 
 app.whenReady()
   .then(startDesktop)
-  .catch((err) => {
+  .catch(async (err) => {
     console.error('[electron] falha ao iniciar app desktop:', err);
-    app.quit();
+    runtimeConfig = runtimeConfig || resolveRuntimeConfig();
+    try {
+      await createMainWindow();
+    } catch (fallbackErr) {
+      console.error('[electron] falha ao abrir janela de fallback:', fallbackErr);
+      dialog.showErrorBox(
+        'Falha ao iniciar AutoZap',
+        String(err && err.message ? err.message : err || 'Erro desconhecido')
+      );
+    }
   });
 
 app.on('window-all-closed', () => {

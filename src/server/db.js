@@ -415,6 +415,13 @@ function initSchema(db) {
       );
     }
   } catch (_) {}
+
+  try {
+    const existingWelcomeEnabled = db.prepare('SELECT value FROM settings WHERE key = ?').get('welcome_message_enabled');
+    if (!existingWelcomeEnabled) {
+      db.prepare('INSERT INTO settings (key, value) VALUES (?, ?)').run('welcome_message_enabled', '1');
+    }
+  } catch (_) {}
 }
 
 function attachHelpers(db) {

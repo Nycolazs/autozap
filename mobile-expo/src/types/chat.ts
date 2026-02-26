@@ -35,6 +35,7 @@ export interface Ticket {
   id: number;
   phone: string;
   contact_name: string | null;
+  avatar_url?: string | null;
   seller_id?: number | null;
   seller_name?: string | null;
   status: TicketStatus;
@@ -63,4 +64,16 @@ export interface ProfilePictureResponse {
   fromCache?: boolean;
   pending?: boolean;
   source?: string | null;
+  reason?: string | null;
+}
+
+export interface QuickMessage {
+  id: number;
+  user_id: number;
+  user_type: UserType;
+  shortcut: string | null;
+  title: string;
+  content: string;
+  created_at: string;
+  updated_at: string;
 }

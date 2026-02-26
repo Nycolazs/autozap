@@ -14,6 +14,8 @@ type RequestOptions = Omit<RequestInit, 'body'> & {
   body?: unknown;
 };
 
+const DEFAULT_REQUEST_TIMEOUT_MS = 20000;
+
 let runtimeApiBase = '';
 let runtimeAuthToken = '';
 
@@ -85,6 +87,15 @@ export async function requestJson<T>(path: string, options: RequestOptions = {})
     headers,
   };
 
+  let timeoutId: ReturnType<typeof setTimeout> | null = null;
+  if (!rest.signal && typeof AbortController !== 'undefined') {
+    const controller = new AbortController();
+    requestInit.signal = controller.signal;
+    timeoutId = setTimeout(() => {
+      controller.abort();
+    }, DEFAULT_REQUEST_TIMEOUT_MS);
+  }
+
   if (body !== undefined) {
     if (isFormData || typeof body === 'string') {
       requestInit.body = body as BodyInit;
@@ -93,7 +104,23 @@ export async function requestJson<T>(path: string, options: RequestOptions = {})
     }
   }
 
-  const response = await fetch(resolveApiUrl(path), requestInit);
+  let response: Response;
+  try {
+    response = await fetch(resolveApiUrl(path), requestInit);
+  } catch (error) {
+    const isAbortError = (
+      typeof error === 'object'
+      && error !== null
+      && 'name' in error
+      && String((error as { name?: string }).name) === 'AbortError'
+    );
+    if (isAbortError) {
+      throw new ApiRequestError('Tempo limite excedido ao conectar com o servidor.', 408, null);
+    }
+    throw new ApiRequestError('Falha de conexão com o servidor.', 0, null);
+  } finally {
+    if (timeoutId) clearTimeout(timeoutId);
+  }
   const parsedBody = await parseResponseBody(response);
 
   if (!response.ok) {

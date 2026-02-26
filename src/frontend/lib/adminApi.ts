@@ -1,4 +1,4 @@
-import { requestJson } from '@/src/frontend/lib/http';
+import { ApiRequestError, requestJson } from '@/src/frontend/lib/http';
 import type {
   AdminTicket,
   AdminUser,
@@ -9,6 +9,7 @@ import type {
   BusinessHour,
   BusinessMessage,
   RankingResponse,
+  WelcomeMessage,
 } from '@/src/frontend/types/admin';
 
 export function listUsers(): Promise<AdminUser[]> {
@@ -67,8 +68,90 @@ export function changeSellerPassword(sellerId: number, newPassword: string): Pro
   });
 }
 
-export function listAdminTickets(): Promise<AdminTicket[]> {
-  return requestJson<AdminTicket[]>('/admin/tickets?includeAll=1', { method: 'GET' });
+type ListAdminTicketsOptions = {
+  sellerId?: number | null;
+  status?: string;
+  startDate?: string;
+  endDate?: string;
+  limit?: number;
+  offset?: number;
+};
+
+const WELCOME_ENDPOINTS = ['/welcome-message', '/admin/welcome-message'] as const;
+const DEFAULT_WELCOME_MESSAGE = '👋 Olá! Seja bem-vindo(a)! Um de nossos atendentes já vai responder você. Por favor, aguarde um momento.';
+
+function isNotFoundError(error: unknown): boolean {
+  return error instanceof ApiRequestError && error.status === 404;
+}
+
+function normalizeTicketStatus(value: unknown): string {
+  const raw = String(value || '').trim().toLowerCase();
+  if (!raw) return '';
+  const normalized = raw
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .replace(/[\s-]+/g, '_');
+  if (normalized === 'em_atendimento' || normalized === 'ematendimento') return 'em_atendimento';
+  if (normalized === 'pendente') return 'pendente';
+  if (normalized === 'aguardando') return 'aguardando';
+  if (normalized === 'resolvido') return 'resolvido';
+  if (normalized === 'encerrado') return 'encerrado';
+  return normalized;
+}
+
+function parseNullableNumber(value: unknown): number | null {
+  if (value == null || value === '') return null;
+  const parsed = Number(value);
+  if (!Number.isFinite(parsed)) return null;
+  return parsed;
+}
+
+function normalizeAdminTicket(input: unknown): AdminTicket | null {
+  if (!input || typeof input !== 'object') return null;
+  const row = input as Record<string, unknown>;
+
+  const id = Number(row.id ?? row.ticket_id);
+  if (!Number.isFinite(id) || id <= 0) return null;
+
+  const sellerId = parseNullableNumber(row.seller_id ?? row.sellerId ?? row.assigned_to ?? row.assignedTo);
+  const contactNameRaw = row.contact_name ?? row.contactName ?? null;
+  const sellerNameRaw = row.seller_name ?? row.sellerName ?? row.assigned_to_name ?? null;
+  const updatedAtRaw = row.updated_at ?? row.updatedAt ?? row.created_at ?? row.createdAt ?? new Date().toISOString();
+
+  return {
+    id,
+    phone: String(row.phone || ''),
+    contact_name: contactNameRaw == null ? null : String(contactNameRaw),
+    seller_id: sellerId,
+    seller_name: sellerNameRaw == null ? null : String(sellerNameRaw),
+    status: normalizeTicketStatus(row.status),
+    updated_at: String(updatedAtRaw),
+  };
+}
+
+export async function listAdminTickets(options: ListAdminTicketsOptions = {}): Promise<AdminTicket[]> {
+  const qs = new URLSearchParams();
+  qs.set('includeAll', '1');
+  if (typeof options.limit === 'number') qs.set('limit', String(options.limit));
+  if (typeof options.offset === 'number') qs.set('offset', String(options.offset));
+  if (options.sellerId === null) qs.set('sellerId', '__unassigned__');
+  if (typeof options.sellerId === 'number' && Number.isFinite(options.sellerId)) {
+    qs.set('sellerId', String(options.sellerId));
+  }
+  if (options.status) qs.set('status', options.status);
+  if (options.startDate) {
+    qs.set('startDate', options.startDate);
+    qs.set('fromDate', options.startDate);
+  }
+  if (options.endDate) {
+    qs.set('endDate', options.endDate);
+    qs.set('toDate', options.endDate);
+  }
+  const response = await requestJson<unknown>(`/admin/tickets?${qs.toString()}`, { method: 'GET' });
+  if (!Array.isArray(response)) return [];
+  return response
+    .map((item) => normalizeAdminTicket(item))
+    .filter((item): item is AdminTicket => item != null);
 }
 
 export function listAssignees(): Promise<Assignee[]> {
@@ -142,6 +225,38 @@ export function saveBusinessMessage(payload: { message: string; enabled: boolean
     method: 'PUT',
     body: payload,
   });
+}
+
+export async function getWelcomeMessage(): Promise<WelcomeMessage> {
+  for (let index = 0; index < WELCOME_ENDPOINTS.length; index += 1) {
+    const endpoint = WELCOME_ENDPOINTS[index];
+    try {
+      return await requestJson<WelcomeMessage>(endpoint, { method: 'GET' });
+    } catch (error) {
+      if (!isNotFoundError(error)) throw error;
+    }
+  }
+
+  return {
+    message: DEFAULT_WELCOME_MESSAGE,
+    enabled: true,
+  };
+}
+
+export async function saveWelcomeMessage(payload: { message: string; enabled: boolean }): Promise<{ success: true }> {
+  for (let index = 0; index < WELCOME_ENDPOINTS.length; index += 1) {
+    const endpoint = WELCOME_ENDPOINTS[index];
+    try {
+      return await requestJson<{ success: true }>(endpoint, {
+        method: 'PUT',
+        body: payload,
+      });
+    } catch (error) {
+      if (!isNotFoundError(error)) throw error;
+    }
+  }
+
+  throw new Error('Configuração de boas-vindas indisponível no backend atual.');
 }
 
 export function getAwaitConfig(): Promise<AwaitConfig> {
