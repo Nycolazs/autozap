@@ -17,6 +17,7 @@ import {
   listAssignees,
   listTickets,
   logout,
+  markTicketReadByAgent,
   sendAudioMessage,
   sendImageMessage,
   sendTextMessage,
@@ -96,6 +97,11 @@ function sameTicketSnapshot(current: Ticket[], next: Ticket[]): boolean {
     if (Number(a.seller_id || 0) !== Number(b.seller_id || 0)) return false;
     if (String(a.seller_name || '') !== String(b.seller_name || '')) return false;
     if (String(a.avatar_url || '') !== String(b.avatar_url || '')) return false;
+    if (Number(a.unread_count || 0) !== Number(b.unread_count || 0)) return false;
+    if (String(a.last_message_content || '') !== String(b.last_message_content || '')) return false;
+    if (String(a.last_message_type || '') !== String(b.last_message_type || '')) return false;
+    if (String(a.last_message_sender || '') !== String(b.last_message_sender || '')) return false;
+    if (String(a.last_message_at || '') !== String(b.last_message_at || '')) return false;
   }
   return true;
 }
@@ -119,6 +125,50 @@ function sameMessageSnapshot(current: ChatMessage[], next: ChatMessage[]): boole
 
 function sortTicketsByNewest(list: Ticket[]): Ticket[] {
   return [...list].sort((a, b) => Number(b.id) - Number(a.id));
+}
+
+function parseSqliteTimestamp(value: string | null | undefined): number {
+  const raw = String(value || '').trim();
+  if (!raw) return 0;
+  const normalized = raw.includes('T') ? raw : `${raw.replace(' ', 'T')}Z`;
+  const parsed = Date.parse(normalized);
+  return Number.isFinite(parsed) ? parsed : 0;
+}
+
+function hasTicketPreviewData(ticket: Ticket): boolean {
+  return Boolean(
+    String(ticket.last_message_at || '').trim()
+    || String(ticket.last_message_content || '').trim()
+    || String(ticket.last_message_type || '').trim()
+  );
+}
+
+function ticketActivityAt(ticket: Ticket): string | null {
+  const last = String(ticket.last_message_at || '').trim();
+  if (last) return last;
+  const updated = String(ticket.updated_at || '').trim();
+  if (updated) return updated;
+  const created = String(ticket.created_at || '').trim();
+  if (created) return created;
+  return null;
+}
+
+function sortTicketsByActivity(list: Ticket[]): Ticket[] {
+  return [...list].sort((a, b) => {
+    const aTs = parseSqliteTimestamp(ticketActivityAt(a));
+    const bTs = parseSqliteTimestamp(ticketActivityAt(b));
+    if (aTs !== bTs) return bTs - aTs;
+    return Number(b.id) - Number(a.id);
+  });
+}
+
+function sortMessagesChronologically(list: ChatMessage[]): ChatMessage[] {
+  return [...list].sort((a, b) => {
+    const aTs = parseSqliteTimestamp(a.created_at || a.updated_at || null);
+    const bTs = parseSqliteTimestamp(b.created_at || b.updated_at || null);
+    if (aTs !== bTs) return aTs - bTs;
+    return Number(a.id) - Number(b.id);
+  });
 }
 
 function sortQuickMessagesByNewest(list: QuickMessage[]): QuickMessage[] {
@@ -241,6 +291,14 @@ function sameTicketRecord(a: Ticket | null, b: Ticket | null): boolean {
     && String(a.seller_name || '') === String(b.seller_name || '');
 }
 
+type TicketPreviewFallback = {
+  last_message_content: string | null;
+  last_message_type: Ticket['last_message_type'] | null;
+  last_message_sender: Ticket['last_message_sender'] | null;
+  last_message_at: string | null;
+  source_updated_at: string;
+};
+
 export default function AgentPage() {
   const router = useRouter();
   const searchParams = useSearchParams();
@@ -281,6 +339,10 @@ export default function AgentPage() {
   const selectedTicketIdRef = useRef<number | null>(null);
   const messagesByTicketRef = useRef<Record<number, ChatMessage[]>>({});
   const latestMessagesRequestByTicketRef = useRef<Record<number, number>>({});
+  const markReadInFlightRef = useRef<Record<number, Promise<void>>>({});
+  const lastMarkReadAtRef = useRef<Record<number, number>>({});
+  const previewFallbackByTicketRef = useRef<Record<number, TicketPreviewFallback>>({});
+  const previewFetchInFlightRef = useRef<Record<number, Promise<void>>>({});
   const deepLinkHandledRef = useRef(false);
 
   const queryTicketId = useMemo(() => {
@@ -437,6 +499,94 @@ export default function AgentPage() {
     await task;
   }, []);
 
+  const mergeTicketWithPreviewFallback = useCallback((ticket: Ticket): Ticket => {
+    if (hasTicketPreviewData(ticket)) return ticket;
+    const ticketId = Number(ticket.id || 0);
+    if (!Number.isFinite(ticketId) || ticketId <= 0) return ticket;
+    const fallback = previewFallbackByTicketRef.current[ticketId];
+    if (!fallback) return ticket;
+    return {
+      ...ticket,
+      last_message_content: fallback.last_message_content,
+      last_message_type: fallback.last_message_type,
+      last_message_sender: fallback.last_message_sender,
+      last_message_at: fallback.last_message_at,
+    };
+  }, []);
+
+  const loadPreviewFallbackForTicket = useCallback(async (ticket: Ticket) => {
+    const ticketId = Number(ticket.id || 0);
+    if (!Number.isFinite(ticketId) || ticketId <= 0) return;
+    if (hasTicketPreviewData(ticket)) {
+      if (previewFallbackByTicketRef.current[ticketId]) {
+        delete previewFallbackByTicketRef.current[ticketId];
+      }
+      return;
+    }
+
+    const sourceUpdatedAt = String(ticket.updated_at || ticket.created_at || '').trim();
+    const cached = previewFallbackByTicketRef.current[ticketId];
+    if (cached && cached.source_updated_at === sourceUpdatedAt) return;
+
+    const inFlight = previewFetchInFlightRef.current[ticketId];
+    if (inFlight) {
+      await inFlight;
+      return;
+    }
+
+    const task = (async () => {
+      try {
+        const rows = await getTicketMessages(ticketId, 1);
+        const last = Array.isArray(rows) && rows.length > 0 ? rows[rows.length - 1] : null;
+        const next: TicketPreviewFallback = {
+          last_message_content: last ? String(last.content || '').trim() || null : null,
+          last_message_type: last ? (last.message_type || 'text') : null,
+          last_message_sender: last ? (last.sender || 'client') : null,
+          last_message_at: last ? (last.created_at || last.updated_at || null) : null,
+          source_updated_at: sourceUpdatedAt,
+        };
+
+        const prev = previewFallbackByTicketRef.current[ticketId];
+        if (
+          prev
+          && prev.last_message_content === next.last_message_content
+          && prev.last_message_type === next.last_message_type
+          && prev.last_message_sender === next.last_message_sender
+          && prev.last_message_at === next.last_message_at
+          && prev.source_updated_at === next.source_updated_at
+        ) {
+          return;
+        }
+
+        previewFallbackByTicketRef.current[ticketId] = next;
+        setTickets((current) => {
+          let changed = false;
+          const mapped = current.map((row) => {
+            if (Number(row.id) !== ticketId) return row;
+            if (hasTicketPreviewData(row)) return row;
+            changed = true;
+            return {
+              ...row,
+              last_message_content: next.last_message_content,
+              last_message_type: next.last_message_type,
+              last_message_sender: next.last_message_sender,
+              last_message_at: next.last_message_at,
+            };
+          });
+          if (!changed) return current;
+          return sortTicketsByActivity(mapped);
+        });
+      } catch (_) {
+        // noop
+      } finally {
+        delete previewFetchInFlightRef.current[ticketId];
+      }
+    })();
+
+    previewFetchInFlightRef.current[ticketId] = task;
+    await task;
+  }, []);
+
   const loadTickets = useCallback(async (silent = false): Promise<Ticket[]> => {
     if (!session) return [];
     if (!silent) setTicketsLoading(true);
@@ -447,10 +597,18 @@ export default function AgentPage() {
         userId: session.userId,
         includeClosed,
       });
-      setTickets((current) => (sameTicketSnapshot(current, list) ? current : list));
+      const baseList = Array.isArray(list) ? list : [];
+      const ordered = sortTicketsByActivity(baseList.map((ticket) => mergeTicketWithPreviewFallback(ticket)));
+      const ticketIds = new Set(ordered.map((ticket) => Number(ticket.id)));
+      for (const rawId of Object.keys(previewFallbackByTicketRef.current)) {
+        const ticketId = Number(rawId);
+        if (!Number.isFinite(ticketId) || ticketIds.has(ticketId)) continue;
+        delete previewFallbackByTicketRef.current[ticketId];
+      }
+      setTickets((current) => (sameTicketSnapshot(current, ordered) ? current : ordered));
       setAvatars((prev) => {
         let next = prev;
-        for (const ticket of list) {
+        for (const ticket of ordered) {
           const key = phoneKey(ticket.phone);
           if (!key) continue;
           const resolved = resolveProfilePictureUrl(key, ticket.avatar_url || '');
@@ -464,7 +622,7 @@ export default function AgentPage() {
         return next;
       });
       setSelectedTicketId((current) => {
-        if (current && list.some((item) => Number(item.id) === Number(current))) return current;
+        if (current && ordered.some((item) => Number(item.id) === Number(current))) return current;
         if (
           current
           && selectedTicketOverride
@@ -472,14 +630,14 @@ export default function AgentPage() {
         ) {
           return current;
         }
-        return list.length ? list[0].id : null;
+        return ordered.length ? ordered[0].id : null;
       });
       setSelectedTicketOverride((current) => {
         if (!current) return current;
-        if (list.some((item) => Number(item.id) === Number(current.id))) return null;
+        if (ordered.some((item) => Number(item.id) === Number(current.id))) return null;
         return current;
       });
-      return list;
+      return ordered;
     } catch (error) {
       if (!silent) {
         showToast('Falha ao carregar lista de conversas.', 'error');
@@ -491,7 +649,56 @@ export default function AgentPage() {
     } finally {
       if (!silent) setTicketsLoading(false);
     }
-  }, [handleAuthExpired, includeClosed, selectedTicketOverride, session, showToast]);
+  }, [handleAuthExpired, includeClosed, mergeTicketWithPreviewFallback, selectedTicketOverride, session, showToast]);
+
+  const markTicketAsRead = useCallback(async (ticketId: number, opts?: { force?: boolean }) => {
+    const normalizedTicketId = Number(ticketId);
+    if (!Number.isFinite(normalizedTicketId) || normalizedTicketId <= 0) return;
+    if (!isPageVisible) return;
+
+    const force = !!(opts && opts.force);
+    const now = Date.now();
+    const lastAt = Number(lastMarkReadAtRef.current[normalizedTicketId] || 0);
+    if (!force && lastAt && (now - lastAt) < 1200) return;
+
+    const inFlight = markReadInFlightRef.current[normalizedTicketId];
+    if (inFlight) {
+      await inFlight;
+      return;
+    }
+
+    lastMarkReadAtRef.current[normalizedTicketId] = now;
+
+    const task = (async () => {
+      try {
+        await markTicketReadByAgent(normalizedTicketId);
+        setTickets((current) => current.map((ticket) => {
+          if (Number(ticket.id) !== normalizedTicketId) return ticket;
+          if (Number(ticket.unread_count || 0) <= 0) return ticket;
+          return { ...ticket, unread_count: 0 };
+        }));
+        setContactTickets((current) => current.map((ticket) => {
+          if (Number(ticket.id) !== normalizedTicketId) return ticket;
+          if (Number(ticket.unread_count || 0) <= 0) return ticket;
+          return { ...ticket, unread_count: 0 };
+        }));
+        setSelectedTicketOverride((current) => {
+          if (!current || Number(current.id) !== normalizedTicketId) return current;
+          if (Number(current.unread_count || 0) <= 0) return current;
+          return { ...current, unread_count: 0 };
+        });
+      } catch (error) {
+        if (error instanceof ApiRequestError && error.status === 401) {
+          handleAuthExpired();
+        }
+      } finally {
+        delete markReadInFlightRef.current[normalizedTicketId];
+      }
+    })();
+
+    markReadInFlightRef.current[normalizedTicketId] = task;
+    await task;
+  }, [handleAuthExpired, isPageVisible]);
 
   const loadMessages = useCallback(async (
     ticketId: number | null,
@@ -517,14 +724,16 @@ export default function AgentPage() {
 
     try {
       const list = await getTicketMessages(normalizedTicketId, 300);
-      messagesByTicketRef.current[normalizedTicketId] = list;
+      const ordered = sortMessagesChronologically(Array.isArray(list) ? list : []);
+      messagesByTicketRef.current[normalizedTicketId] = ordered;
 
       const stillLatestRequest = requestId >= (latestMessagesRequestByTicketRef.current[normalizedTicketId] || 0);
       const stillSelectedTicket = Number(selectedTicketIdRef.current || 0) === normalizedTicketId;
       if (!stillLatestRequest || !stillSelectedTicket) return;
 
-      setMessages((current) => (sameMessageSnapshot(current, list) ? current : list));
+      setMessages((current) => (sameMessageSnapshot(current, ordered) ? current : ordered));
       setMessagesLoading(false);
+      void markTicketAsRead(normalizedTicketId);
     } catch (error) {
       const stillSelectedTicket = Number(selectedTicketIdRef.current || 0) === normalizedTicketId;
       if (!silent && stillSelectedTicket) showToast('Falha ao carregar mensagens.', 'error');
@@ -539,7 +748,7 @@ export default function AgentPage() {
         setMessagesLoading(false);
       }
     }
-  }, [handleAuthExpired, showToast]);
+  }, [handleAuthExpired, markTicketAsRead, showToast]);
 
   const refreshAfterSend = useCallback(async (ticketId: number) => {
     await Promise.all([
@@ -1095,6 +1304,23 @@ export default function AgentPage() {
   }, [avatars, isPageVisible, refreshAvatarForPhone, session, tickets]);
 
   useEffect(() => {
+    if (!session || !tickets.length) return;
+    let active = true;
+
+    void (async () => {
+      const missingPreview = tickets.filter((ticket) => !hasTicketPreviewData(ticket)).slice(0, 80);
+      for (const ticket of missingPreview) {
+        if (!active) break;
+        await loadPreviewFallbackForTicket(ticket);
+      }
+    })();
+
+    return () => {
+      active = false;
+    };
+  }, [loadPreviewFallbackForTicket, session, tickets]);
+
+  useEffect(() => {
     if (typeof window === 'undefined') return;
     const media = window.matchMedia('(max-width: 980px)');
     const apply = () => setIsMobileLayout(media.matches);
@@ -1145,6 +1371,7 @@ export default function AgentPage() {
     if (Array.isArray(cached)) {
       setMessages((current) => (sameMessageSnapshot(current, cached) ? current : cached));
       setMessagesLoading(false);
+      void markTicketAsRead(ticketId, { force: true });
       void loadMessages(ticketId, { silent: true });
       return;
     }
@@ -1152,7 +1379,7 @@ export default function AgentPage() {
     setMessages([]);
     setMessagesLoading(true);
     void loadMessages(ticketId, { silent: false });
-  }, [selectedTicketId, loadMessages]);
+  }, [selectedTicketId, loadMessages, markTicketAsRead]);
 
   useInterval(() => {
     if (!session || !isPageVisible) return;

@@ -1395,8 +1395,10 @@ export function ChatScreen({ route, navigation }: ChatScreenProps) {
 
   const sortedMessages = useMemo(() => {
     return [...messages].sort((a, b) => {
-      if (a.id !== b.id) return a.id - b.id;
-      return String(a.created_at).localeCompare(String(b.created_at));
+      const aTs = parseSqliteDateToEpochMs(a.created_at || a.updated_at || null);
+      const bTs = parseSqliteDateToEpochMs(b.created_at || b.updated_at || null);
+      if (aTs !== bTs) return aTs - bTs;
+      return Number(a.id) - Number(b.id);
     });
   }, [messages]);
   const showBlockingMessagesLoader = loading && sortedMessages.length === 0;

@@ -11,8 +11,8 @@ import {
   View,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
-import { ApiRequestError } from '../api/client';
-import { fetchProfilePicture, getConnectionStatus, listTickets } from '../api/chat';
+import { ApiRequestError, getAuthToken, resolveApiUrl } from '../api/client';
+import { fetchProfilePicture, getConnectionStatus, getTicketMessages, listTickets } from '../api/chat';
 import { useAppSession } from '../context/AppSessionContext';
 import { useAppTheme } from '../context/AppThemeContext';
 import { formatDate, formatTime } from '../lib/date';
@@ -27,10 +27,18 @@ type TicketsScreenProps = NativeStackScreenProps<RootStackParamList, 'Tickets'>;
 let ticketsScreenCache: Ticket[] = [];
 let ticketsAvatarCache: Record<string, string | null> = {};
 
+type TicketPreviewFallback = {
+  last_message_content: string | null;
+  last_message_type: Ticket['last_message_type'] | null;
+  last_message_sender: Ticket['last_message_sender'] | null;
+  last_message_at: string | null;
+  source_updated_at: string;
+};
+
 function statusLabel(status: Ticket['status']): string {
   if (status === 'pendente') return 'Pendente';
   if (status === 'aguardando') return 'Aguardando';
-  if (status === 'em_atendimento') return 'Em atendimento';
+  if (status === 'em_atendimento') return 'Em Atendimento';
   if (status === 'resolvido') return 'Resolvido';
   return 'Encerrado';
 }
@@ -67,8 +75,14 @@ function statusBadgeStyle(status: Ticket['status'], isDark: boolean) {
   return { backgroundColor: '#eef2f6', color: '#5f6c7b', borderColor: '#d7e0ea' };
 }
 
+function ticketDisplayName(ticket: Ticket): string {
+  const fromContact = String(ticket.contact_name || '').trim();
+  if (fromContact) return fromContact;
+  return 'Cliente';
+}
+
 function avatarLetter(ticket: Ticket): string {
-  const base = String(ticket.contact_name || ticket.phone || '').trim();
+  const base = ticketDisplayName(ticket);
   const tokens = base
     .split(/\s+/)
     .map((token) => token.replace(/[^a-zA-Z0-9]/g, ''))
@@ -80,6 +94,100 @@ function avatarLetter(ticket: Ticket): string {
 
 function normalizePhoneForApi(value: unknown): string {
   return String(value || '').split('@')[0].replace(/\D/g, '');
+}
+
+function resolveRealtimeSocketUrl(): string | null {
+  const wsBase = resolveApiUrl('/ws');
+  if (!wsBase) return null;
+
+  let finalUrl = wsBase;
+  if (finalUrl.startsWith('https://')) finalUrl = `wss://${finalUrl.slice('https://'.length)}`;
+  else if (finalUrl.startsWith('http://')) finalUrl = `ws://${finalUrl.slice('http://'.length)}`;
+  else if (!finalUrl.startsWith('ws://') && !finalUrl.startsWith('wss://')) return null;
+
+  const token = getAuthToken();
+  if (!token) return finalUrl;
+  return `${finalUrl}${finalUrl.includes('?') ? '&' : '?'}auth=${encodeURIComponent(token)}`;
+}
+
+function normalizeMessageType(type: unknown): string {
+  const normalized = String(type || '').trim().toLowerCase();
+  if (!normalized) return 'text';
+  if (normalized === 'image') return 'image';
+  if (normalized === 'audio') return 'audio';
+  if (normalized === 'video') return 'video';
+  if (normalized === 'sticker') return 'sticker';
+  if (normalized === 'document') return 'document';
+  if (normalized === 'system') return 'system';
+  return 'text';
+}
+
+function mediaTypeLabel(type: string): string {
+  if (type === 'image') return 'Imagem';
+  if (type === 'audio') return 'Áudio';
+  if (type === 'video') return 'Vídeo';
+  if (type === 'sticker') return 'Figurinha';
+  if (type === 'document') return 'Documento';
+  if (type === 'system') return 'Atualização';
+  return '';
+}
+
+function ticketPreviewText(ticket: Ticket): string {
+  const messageType = normalizeMessageType(ticket.last_message_type);
+  const rawContent = String(ticket.last_message_content || '').replace(/\s+/g, ' ').trim();
+  const sender = String(ticket.last_message_sender || '').trim().toLowerCase();
+  const hasLastMessageData = Boolean(
+    String(ticket.last_message_at || '').trim()
+    || rawContent
+    || String(ticket.last_message_type || '').trim()
+  );
+
+  let preview = rawContent;
+  if (!preview) {
+    preview = mediaTypeLabel(messageType);
+  } else if (messageType !== 'text') {
+    const mediaLabel = mediaTypeLabel(messageType);
+    if (mediaLabel) preview = `${mediaLabel}: ${preview}`;
+  }
+
+  if (!preview) return hasLastMessageData ? 'Sem mensagens' : '';
+  if (sender === 'agent') return `Você: ${preview}`;
+  return preview;
+}
+
+function hasTicketPreviewData(ticket: Ticket): boolean {
+  return Boolean(
+    String(ticket.last_message_at || '').trim()
+    || String(ticket.last_message_content || '').trim()
+    || String(ticket.last_message_type || '').trim()
+  );
+}
+
+function parseSqliteDateToEpochMs(value: string | null | undefined): number {
+  const raw = String(value || '').trim();
+  if (!raw) return 0;
+  const normalized = raw.includes('T') ? raw : `${raw.replace(' ', 'T')}Z`;
+  const parsed = Date.parse(normalized);
+  return Number.isFinite(parsed) ? parsed : 0;
+}
+
+function ticketActivityAt(ticket: Ticket): string | null {
+  const last = String(ticket.last_message_at || '').trim();
+  if (last) return last;
+  const updated = String(ticket.updated_at || '').trim();
+  if (updated) return updated;
+  const created = String(ticket.created_at || '').trim();
+  if (created) return created;
+  return null;
+}
+
+function sortTicketsByActivity(items: Ticket[]): Ticket[] {
+  return [...items].sort((a, b) => {
+    const aTs = parseSqliteDateToEpochMs(ticketActivityAt(a));
+    const bTs = parseSqliteDateToEpochMs(ticketActivityAt(b));
+    if (aTs !== bTs) return bTs - aTs;
+    return Number(b.id) - Number(a.id);
+  });
 }
 
 function isProfilePictureLookupUrl(value: string): boolean {
@@ -99,11 +207,18 @@ export function TicketsScreen({ navigation }: TicketsScreenProps) {
   const [loading, setLoading] = useState(() => ticketsScreenCache.length === 0);
   const [refreshing, setRefreshing] = useState(false);
   const [avatars, setAvatars] = useState<Record<string, string | null>>(() => ticketsAvatarCache);
+  const [localUnreadVersion, setLocalUnreadVersion] = useState(0);
   const ticketsLengthRef = useRef<number>(ticketsScreenCache.length);
   const avatarLookupAtRef = useRef<Record<string, number>>({});
   const avatarInFlightRef = useRef<Record<string, Promise<void>>>({});
   const avatarUnavailableUntilRef = useRef<Record<string, number>>({});
   const avatarRetryTimeoutRef = useRef<Record<string, ReturnType<typeof setTimeout>>>({});
+  const localUnreadByTicketRef = useRef<Record<number, number>>({});
+  const lastTicketUpdatedAtRef = useRef<Record<number, number>>({});
+  const localUnreadInitializedRef = useRef(false);
+  const realtimeRefreshTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const previewFallbackByTicketRef = useRef<Record<number, TicketPreviewFallback>>({});
+  const previewFetchInFlightRef = useRef<Record<number, Promise<void>>>({});
   const openCount = useMemo(
     () => tickets.filter((ticket) => ticket.status !== 'resolvido' && ticket.status !== 'encerrado').length,
     [tickets]
@@ -131,10 +246,86 @@ export function TicketsScreen({ navigation }: TicketsScreenProps) {
         userId: session.userId,
         includeClosed,
       });
-      setTickets(list);
+      const safeList = Array.isArray(list) ? list : [];
+      let localUnreadChanged = false;
+      const seenTicketIds = new Set<number>();
+
+      for (const ticket of safeList) {
+        const ticketId = Number(ticket.id || 0);
+        if (!Number.isFinite(ticketId) || ticketId <= 0) continue;
+        seenTicketIds.add(ticketId);
+
+        const serverUnreadRaw = ticket.unread_count;
+        const serverUnreadParsed = Number(serverUnreadRaw);
+        const hasServerUnread = (
+          serverUnreadRaw !== null
+          && serverUnreadRaw !== undefined
+          && Number.isFinite(serverUnreadParsed)
+        );
+        const serverUnread = hasServerUnread
+          ? Math.max(0, Math.floor(serverUnreadParsed))
+          : 0;
+        const updatedAtMs = parseSqliteDateToEpochMs(ticketActivityAt(ticket));
+        const previousUpdatedAtMs = Number(lastTicketUpdatedAtRef.current[ticketId] || 0);
+
+        if (hasServerUnread && serverUnread > 0) {
+          if (Number(localUnreadByTicketRef.current[ticketId] || 0) > 0) {
+            localUnreadByTicketRef.current[ticketId] = 0;
+            localUnreadChanged = true;
+          }
+          if (updatedAtMs > previousUpdatedAtMs) {
+            lastTicketUpdatedAtRef.current[ticketId] = updatedAtMs;
+          }
+          continue;
+        }
+
+        if (!localUnreadInitializedRef.current || previousUpdatedAtMs <= 0) {
+          lastTicketUpdatedAtRef.current[ticketId] = updatedAtMs;
+          continue;
+        }
+
+        if (updatedAtMs > (previousUpdatedAtMs + 500)) {
+          if (!hasServerUnread || serverUnread <= 0) {
+            localUnreadByTicketRef.current[ticketId] = Number(localUnreadByTicketRef.current[ticketId] || 0) + 1;
+            localUnreadChanged = true;
+          }
+          lastTicketUpdatedAtRef.current[ticketId] = updatedAtMs;
+          continue;
+        }
+
+        if (updatedAtMs > previousUpdatedAtMs) {
+          lastTicketUpdatedAtRef.current[ticketId] = updatedAtMs;
+        }
+      }
+
+      for (const rawId of Object.keys(localUnreadByTicketRef.current)) {
+        const ticketId = Number(rawId);
+        if (!Number.isFinite(ticketId) || seenTicketIds.has(ticketId)) continue;
+        delete localUnreadByTicketRef.current[ticketId];
+        localUnreadChanged = true;
+      }
+      for (const rawId of Object.keys(lastTicketUpdatedAtRef.current)) {
+        const ticketId = Number(rawId);
+        if (!Number.isFinite(ticketId) || seenTicketIds.has(ticketId)) continue;
+        delete lastTicketUpdatedAtRef.current[ticketId];
+      }
+      for (const rawId of Object.keys(previewFallbackByTicketRef.current)) {
+        const ticketId = Number(rawId);
+        if (!Number.isFinite(ticketId) || seenTicketIds.has(ticketId)) continue;
+        delete previewFallbackByTicketRef.current[ticketId];
+      }
+
+      if (!localUnreadInitializedRef.current) {
+        localUnreadInitializedRef.current = true;
+      }
+      if (localUnreadChanged) {
+        setLocalUnreadVersion((value) => value + 1);
+      }
+
+      setTickets(sortTicketsByActivity(safeList));
       setAvatars((current) => {
         let next = current;
-        for (const ticket of list) {
+        for (const ticket of safeList) {
           const normalizedPhone = normalizePhoneForApi(ticket.phone);
           if (!normalizedPhone) continue;
           const resolved = resolveProfilePictureUrl(normalizedPhone, ticket.avatar_url || '');
@@ -246,14 +437,150 @@ export function TicketsScreen({ navigation }: TicketsScreenProps) {
     await task;
   }, []);
 
+  const loadPreviewFallbackForTicket = useCallback(async (ticket: Ticket) => {
+    const ticketId = Number(ticket.id || 0);
+    if (!Number.isFinite(ticketId) || ticketId <= 0) return;
+    if (hasTicketPreviewData(ticket)) {
+      if (previewFallbackByTicketRef.current[ticketId]) {
+        delete previewFallbackByTicketRef.current[ticketId];
+        setLocalUnreadVersion((value) => value + 1);
+      }
+      return;
+    }
+
+    const sourceUpdatedAt = String(ticket.updated_at || ticket.created_at || '').trim();
+    const cached = previewFallbackByTicketRef.current[ticketId];
+    if (cached && cached.source_updated_at === sourceUpdatedAt) return;
+
+    const inFlight = previewFetchInFlightRef.current[ticketId];
+    if (inFlight) {
+      await inFlight;
+      return;
+    }
+
+    const task = (async () => {
+      try {
+        const rows = await getTicketMessages(ticketId, 1);
+        const last = Array.isArray(rows) && rows.length > 0 ? rows[rows.length - 1] : null;
+        const next: TicketPreviewFallback = {
+          last_message_content: last ? String(last.content || '').trim() || null : null,
+          last_message_type: last ? (last.message_type || 'text') : null,
+          last_message_sender: last ? (last.sender || 'client') : null,
+          last_message_at: last ? (last.created_at || last.updated_at || null) : null,
+          source_updated_at: sourceUpdatedAt,
+        };
+        const prev = previewFallbackByTicketRef.current[ticketId];
+        if (
+          prev
+          && prev.last_message_content === next.last_message_content
+          && prev.last_message_type === next.last_message_type
+          && prev.last_message_sender === next.last_message_sender
+          && prev.last_message_at === next.last_message_at
+          && prev.source_updated_at === next.source_updated_at
+        ) {
+          return;
+        }
+        previewFallbackByTicketRef.current[ticketId] = next;
+        setLocalUnreadVersion((value) => value + 1);
+      } catch (_) {
+        // noop
+      } finally {
+        delete previewFetchInFlightRef.current[ticketId];
+      }
+    })();
+
+    previewFetchInFlightRef.current[ticketId] = task;
+    await task;
+  }, []);
+
+  const queueRealtimeRefresh = useCallback(() => {
+    if (realtimeRefreshTimeoutRef.current) return;
+    realtimeRefreshTimeoutRef.current = setTimeout(() => {
+      realtimeRefreshTimeoutRef.current = null;
+      void loadTickets(true);
+    }, 120);
+  }, [loadTickets]);
+
   useEffect(() => {
     void Promise.all([loadConnection(), loadTickets()]);
   }, [loadConnection, loadTickets]);
 
   useEffect(() => {
+    const unsubscribe = navigation.addListener('focus', () => {
+      void Promise.all([loadConnection(), loadTickets(true)]);
+    });
+    return unsubscribe;
+  }, [loadConnection, loadTickets, navigation]);
+
+  useEffect(() => {
+    const wsUrl = resolveRealtimeSocketUrl();
+    if (!wsUrl) return;
+
+    let active = true;
+    let ws: WebSocket | null = null;
+    let reconnectTimer: ReturnType<typeof setTimeout> | null = null;
+
+    const scheduleReconnect = () => {
+      if (!active || reconnectTimer) return;
+      reconnectTimer = setTimeout(() => {
+        reconnectTimer = null;
+        connect();
+      }, 1200);
+    };
+
+    const handleRealtimeMessage = (raw: string) => {
+      let parsed: { type?: string } | null = null;
+      try {
+        parsed = JSON.parse(String(raw || '')) as { type?: string };
+      } catch (_) {
+        parsed = null;
+      }
+      if (!parsed || !parsed.type) return;
+      if (parsed.type !== 'message' && parsed.type !== 'ticket') return;
+      queueRealtimeRefresh();
+    };
+
+    const connect = () => {
+      if (!active) return;
+      try {
+        ws = new WebSocket(wsUrl);
+      } catch (_) {
+        scheduleReconnect();
+        return;
+      }
+
+      ws.onmessage = (event) => {
+        if (!active) return;
+        handleRealtimeMessage(String((event && event.data) || ''));
+      };
+      ws.onerror = () => {
+        // noop
+      };
+      ws.onclose = () => {
+        if (!active) return;
+        scheduleReconnect();
+      };
+    };
+
+    connect();
+
+    return () => {
+      active = false;
+      if (reconnectTimer) clearTimeout(reconnectTimer);
+      if (realtimeRefreshTimeoutRef.current) {
+        clearTimeout(realtimeRefreshTimeoutRef.current);
+        realtimeRefreshTimeoutRef.current = null;
+      }
+      if (ws) {
+        try { ws.close(); } catch (_) {}
+      }
+    };
+  }, [queueRealtimeRefresh]);
+
+  useEffect(() => {
     const ticketsInterval = setInterval(() => {
       void loadTickets(true);
-    }, 4500);
+    }, 1800);
 
     const connectionInterval = setInterval(() => {
       void loadConnection();
@@ -276,6 +603,23 @@ export function TicketsScreen({ navigation }: TicketsScreenProps) {
       }
     }
   }, [avatars, refreshAvatarForPhone, tickets]);
+
+  useEffect(() => {
+    if (!tickets.length) return;
+    let active = true;
+
+    void (async () => {
+      const missingPreview = tickets.filter((ticket) => !hasTicketPreviewData(ticket)).slice(0, 60);
+      for (const ticket of missingPreview) {
+        if (!active) break;
+        await loadPreviewFallbackForTicket(ticket);
+      }
+    })();
+
+    return () => {
+      active = false;
+    };
+  }, [loadPreviewFallbackForTicket, tickets]);
 
   useEffect(() => (
     () => {
@@ -352,12 +696,47 @@ export function TicketsScreen({ navigation }: TicketsScreenProps) {
                     || null)
                   : null;
                 const badge = statusBadgeStyle(item.status, isDark);
-                const hasContactName = String(item.contact_name || '').trim().length > 0;
+                const displayName = ticketDisplayName(item);
+                const fallbackPreview = previewFallbackByTicketRef.current[Number(item.id)];
+                const effectiveTicket = (hasTicketPreviewData(item) || !fallbackPreview)
+                  ? item
+                  : {
+                    ...item,
+                    last_message_content: fallbackPreview.last_message_content,
+                    last_message_type: fallbackPreview.last_message_type,
+                    last_message_sender: fallbackPreview.last_message_sender,
+                    last_message_at: fallbackPreview.last_message_at,
+                  };
+                const previewText = ticketPreviewText(effectiveTicket);
+                const activityAt = ticketActivityAt(effectiveTicket);
+                const serverUnreadValue = Number(item.unread_count);
+                const hasServerUnread = (
+                  item.unread_count !== null
+                  && item.unread_count !== undefined
+                  && Number.isFinite(serverUnreadValue)
+                );
+                const serverUnread = hasServerUnread ? Math.max(0, Math.floor(serverUnreadValue)) : 0;
+                const fallbackUnread = Math.max(0, Math.floor(Number(localUnreadByTicketRef.current[Number(item.id)] || 0)));
+                const unread = Math.max(serverUnread, fallbackUnread);
+                const unreadLabel = unread > 99 ? '99+' : String(Math.max(0, Math.floor(unread)));
 
                 return (
                   <Pressable
                     style={styles.ticketItem}
-                    onPress={() => navigation.navigate('Chat', { ticket: item })}
+                    onPress={() => {
+                      const ticketId = Number(item.id || 0);
+                      if (Number.isFinite(ticketId) && ticketId > 0) {
+                        const updatedAtMs = parseSqliteDateToEpochMs(activityAt);
+                        if (updatedAtMs > 0) {
+                          lastTicketUpdatedAtRef.current[ticketId] = updatedAtMs;
+                        }
+                        if (localUnreadByTicketRef.current[ticketId]) {
+                          localUnreadByTicketRef.current[ticketId] = 0;
+                          setLocalUnreadVersion((value) => value + 1);
+                        }
+                      }
+                      navigation.navigate('Chat', { ticket: item });
+                    }}
                   >
                     <View style={styles.avatarWrap}>
                       {avatarUrl ? (
@@ -382,15 +761,23 @@ export function TicketsScreen({ navigation }: TicketsScreenProps) {
                     <View style={styles.ticketMain}>
                       <View style={styles.ticketTopRow}>
                         <View style={styles.ticketIdentityRow}>
-                          <Text numberOfLines={1} style={styles.ticketName}>{item.contact_name || item.phone}</Text>
-                          {hasContactName ? <Text style={styles.ticketPhoneDivider}>•</Text> : null}
-                          {hasContactName ? <Text numberOfLines={1} style={styles.ticketPhoneInline}>{item.phone}</Text> : null}
+                          <Text numberOfLines={1} style={styles.ticketName}>{displayName}</Text>
                         </View>
                         <View style={styles.ticketDateTimeWrap}>
-                          <Text style={styles.ticketDate}>{formatDate(item.updated_at)}</Text>
-                          <Text style={styles.ticketTime}>{formatTime(item.updated_at)}</Text>
+                          <View style={styles.ticketDateTimeTop}>
+                            <Text style={styles.ticketDate}>{formatDate(activityAt)}</Text>
+                            <Text style={[styles.ticketTime, unread > 0 ? styles.ticketTimeUnread : null]}>
+                              {formatTime(activityAt)}
+                            </Text>
+                          </View>
+                          {unread > 0 ? <Text style={styles.unreadBadge}>{unreadLabel}</Text> : null}
                         </View>
                       </View>
+                      {previewText ? (
+                        <Text numberOfLines={1} ellipsizeMode="tail" style={styles.ticketPreview}>
+                          {previewText}
+                        </Text>
+                      ) : null}
                       <View style={[styles.statusBadge, {
                         backgroundColor: badge.backgroundColor,
                         borderColor: badge.borderColor,
@@ -578,15 +965,22 @@ const lightStyles = StyleSheet.create({
   },
   ticketTopRow: {
     flexDirection: 'row',
-    alignItems: 'baseline',
+    alignItems: 'flex-start',
     justifyContent: 'space-between',
     gap: 10,
   },
   ticketDateTimeWrap: {
-    flexDirection: 'row',
-    alignItems: 'baseline',
-    gap: 6,
+    flexDirection: 'column',
+    alignItems: 'flex-end',
+    justifyContent: 'flex-start',
+    minWidth: 28,
     flexShrink: 0,
+    position: 'relative',
+  },
+  ticketDateTimeTop: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
   },
   ticketIdentityRow: {
     flex: 1,
@@ -612,15 +1006,40 @@ const lightStyles = StyleSheet.create({
     fontSize: 12,
     flexShrink: 0,
   },
+  ticketPreview: {
+    color: '#64748b',
+    fontSize: 13,
+    lineHeight: 18,
+  },
   ticketTime: {
     color: lightColors.muted,
     fontSize: 12,
     flexShrink: 0,
   },
+  ticketTimeUnread: {
+    color: '#1f9d56',
+    fontWeight: '700',
+  },
   ticketDate: {
     color: lightColors.muted,
     fontSize: 12,
     flexShrink: 0,
+  },
+  unreadBadge: {
+    minWidth: 18,
+    height: 18,
+    borderRadius: 999,
+    paddingHorizontal: 0,
+    backgroundColor: '#25d366',
+    color: '#0f2e1f',
+    fontSize: 11,
+    fontWeight: '800',
+    textAlign: 'center',
+    lineHeight: 18,
+    overflow: 'visible',
+    position: 'absolute',
+    right: 0,
+    top: 18,
   },
   statusBadge: {
     borderWidth: 1,
@@ -709,11 +1128,22 @@ const darkStyles = StyleSheet.create({
   ticketPhoneInline: {
     color: '#a1b5cb',
   },
+  ticketPreview: {
+    color: '#9ab0c5',
+  },
   ticketTime: {
     color: '#a1b5cb',
   },
+  ticketTimeUnread: {
+    color: '#25d366',
+    fontWeight: '700',
+  },
   ticketDate: {
     color: '#a1b5cb',
+  },
+  unreadBadge: {
+    backgroundColor: '#36d679',
+    color: '#083a1f',
   },
   emptyText: {
     color: '#a1b5cb',

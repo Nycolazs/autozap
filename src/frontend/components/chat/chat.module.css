@@ -252,6 +252,16 @@
   flex-shrink: 0;
 }
 
+.ticketPreview {
+  min-width: 0;
+  font-size: 12px;
+  color: var(--az-muted);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  opacity: 0.96;
+}
+
 .ticketMeta {
   display: flex;
   align-items: center;
@@ -314,6 +324,21 @@
   font-size: 11px;
   color: var(--az-muted);
   white-space: nowrap;
+}
+
+.ticketUnreadBadge {
+  min-width: 18px;
+  height: 18px;
+  border-radius: 999px;
+  padding: 0 6px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  background: #25d366;
+  color: #0f2e1f;
+  font-size: 10px;
+  font-weight: 800;
+  line-height: 1;
 }
 
 .chatPanel {
@@ -2130,6 +2155,11 @@
 :global(:root[data-theme='dark']) .ticketItemActive {
   background: #203853;
   box-shadow: inset 3px 0 0 #4d99ff;
+}
+
+:global(:root[data-theme='dark']) .ticketUnreadBadge {
+  background: #36d679;
+  color: #083a1f;
 }
 
 :global(:root[data-theme='dark']) .messagesWrap {

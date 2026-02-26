@@ -12,6 +12,7 @@ const { createLogger } = require('../logger');
 const logger = createLogger('whatsapp-cloud');
 
 const OUT_OF_HOURS_COOLDOWN_MINUTES = Number(process.env.OUT_OF_HOURS_COOLDOWN_MINUTES || 120);
+const BUSINESS_TIMEZONE = String(process.env.BUSINESS_TIMEZONE || 'America/Sao_Paulo').trim() || 'America/Sao_Paulo';
 
 let started = false;
 let lastConnectedAt = null;
@@ -562,17 +563,189 @@ function shouldRetryWithoutContext(err) {
 
 function parseTimeToMinutes(timeStr) {
   if (!timeStr || typeof timeStr !== 'string') return null;
-  const [h, m] = timeStr.split(':').map(Number);
-  if (Number.isNaN(h) || Number.isNaN(m)) return null;
-  return (h * 60) + m;
+  const raw = String(timeStr).trim();
+  if (!raw) return null;
+
+  const match24 = raw.match(/^([01]?\d|2[0-3]):([0-5]\d)(?::[0-5]\d)?$/);
+  if (match24) {
+    const hour = Number(match24[1]);
+    const minute = Number(match24[2]);
+    if (!Number.isFinite(hour) || !Number.isFinite(minute)) return null;
+    return (hour * 60) + minute;
+  }
+
+  const match12 = raw.match(/^(\d{1,2}):([0-5]\d)(?::[0-5]\d)?\s*([AaPp][Mm])$/);
+  if (match12) {
+    const sourceHour = Number(match12[1]);
+    const minute = Number(match12[2]);
+    const period = String(match12[3] || '').toUpperCase();
+    if (!Number.isFinite(sourceHour) || sourceHour < 1 || sourceHour > 12 || !Number.isFinite(minute)) return null;
+    let hour = sourceHour % 12;
+    if (period === 'PM') hour += 12;
+    return (hour * 60) + minute;
+  }
+
+  return null;
 }
 
-function isWithinHours(date, openTime, closeTime) {
+function mapWeekdayToIndex(weekdayValue) {
+  const key = String(weekdayValue || '').trim().toLowerCase().slice(0, 3);
+  if (key === 'sun') return 0;
+  if (key === 'mon') return 1;
+  if (key === 'tue') return 2;
+  if (key === 'wed') return 3;
+  if (key === 'thu') return 4;
+  if (key === 'fri') return 5;
+  if (key === 'sat') return 6;
+  return null;
+}
+
+function parseTimezoneOffsetMinutes(rawTimezone) {
+  const raw = String(rawTimezone || '').trim();
+  if (!raw) return null;
+
+  const upper = raw.toUpperCase();
+  if (upper === 'UTC' || upper === 'GMT' || upper === 'Z') return 0;
+
+  const normalized = upper
+    .replace(/^UTC/, '')
+    .replace(/^GMT/, '')
+    .trim();
+
+  const match = normalized.match(/^([+-])(\d{1,2})(?::?(\d{2}))?$/);
+  if (!match) return null;
+
+  const sign = match[1] === '-' ? -1 : 1;
+  const hours = Number(match[2]);
+  const minutes = Number(match[3] || '0');
+  if (!Number.isFinite(hours) || !Number.isFinite(minutes)) return null;
+  if (hours > 14 || minutes < 0 || minutes > 59) return null;
+
+  return sign * ((hours * 60) + minutes);
+}
+
+function fixedTimezoneOffsetMinutes(timezone) {
+  const normalized = String(timezone || '').trim().toLowerCase();
+  if (!normalized) return null;
+
+  // Fallback para ambientes Node sem suporte completo de ICU/timezone.
+  if (
+    normalized === 'america/sao_paulo'
+    || normalized === 'america/fortaleza'
+    || normalized === 'america/recife'
+    || normalized === 'america/bahia'
+  ) {
+    return -180;
+  }
+
+  return parseTimezoneOffsetMinutes(timezone);
+}
+
+function buildDateContextFromOffset(date, offsetMinutes, timezoneLabel) {
+  if (!Number.isFinite(offsetMinutes)) return null;
+  const targetDate = date instanceof Date && !Number.isNaN(date.getTime()) ? date : new Date();
+  const shifted = new Date(targetDate.getTime() + (offsetMinutes * 60000));
+  if (Number.isNaN(shifted.getTime())) return null;
+
+  const year = shifted.getUTCFullYear();
+  const month = String(shifted.getUTCMonth() + 1).padStart(2, '0');
+  const day = String(shifted.getUTCDate()).padStart(2, '0');
+  return {
+    dayOfWeek: shifted.getUTCDay(),
+    dateStr: `${year}-${month}-${day}`,
+    nowMinutes: (shifted.getUTCHours() * 60) + shifted.getUTCMinutes(),
+    timezone: timezoneLabel || `offset:${offsetMinutes}`,
+  };
+}
+
+function getBusinessDateContext(date) {
+  const targetDate = date instanceof Date && !Number.isNaN(date.getTime()) ? date : new Date();
+
+  try {
+    const parts = new Intl.DateTimeFormat('en-US', {
+      timeZone: BUSINESS_TIMEZONE,
+      weekday: 'short',
+      year: 'numeric',
+      month: '2-digit',
+      day: '2-digit',
+      hour: '2-digit',
+      minute: '2-digit',
+      hour12: false,
+    }).formatToParts(targetDate);
+
+    const lookup = {};
+    for (const part of parts) {
+      if (!part || part.type === 'literal') continue;
+      lookup[part.type] = part.value;
+    }
+
+    const year = String(lookup.year || '').trim();
+    const month = String(lookup.month || '').trim();
+    const dayOfMonth = String(lookup.day || '').trim();
+    const hour = Number(lookup.hour);
+    const minute = Number(lookup.minute);
+    const weekday = mapWeekdayToIndex(lookup.weekday);
+
+    if (!year || !month || !dayOfMonth || weekday == null || !Number.isFinite(hour) || !Number.isFinite(minute)) {
+      throw new Error('invalid-timezone-parts');
+    }
+
+    return {
+      dayOfWeek: weekday,
+      dateStr: `${year}-${month}-${dayOfMonth}`,
+      nowMinutes: (hour * 60) + minute,
+      timezone: BUSINESS_TIMEZONE,
+    };
+  } catch (_) {
+    const fixedOffset = fixedTimezoneOffsetMinutes(BUSINESS_TIMEZONE);
+    if (fixedOffset != null) {
+      const fixedContext = buildDateContextFromOffset(targetDate, fixedOffset, `${BUSINESS_TIMEZONE} (fixed)`);
+      if (fixedContext) return fixedContext;
+    }
+
+    const year = targetDate.getFullYear();
+    const month = String(targetDate.getMonth() + 1).padStart(2, '0');
+    const day = String(targetDate.getDate()).padStart(2, '0');
+    return {
+      dayOfWeek: targetDate.getDay(),
+      dateStr: `${year}-${month}-${day}`,
+      nowMinutes: (targetDate.getHours() * 60) + targetDate.getMinutes(),
+      timezone: 'local',
+    };
+  }
+}
+
+function getLocalDateContext(date) {
+  const targetDate = date instanceof Date && !Number.isNaN(date.getTime()) ? date : new Date();
+  const year = targetDate.getFullYear();
+  const month = String(targetDate.getMonth() + 1).padStart(2, '0');
+  const day = String(targetDate.getDate()).padStart(2, '0');
+  return {
+    dayOfWeek: targetDate.getDay(),
+    dateStr: `${year}-${month}-${day}`,
+    nowMinutes: (targetDate.getHours() * 60) + targetDate.getMinutes(),
+    timezone: 'local',
+  };
+}
+
+function getUtcDateContext(date) {
+  const targetDate = date instanceof Date && !Number.isNaN(date.getTime()) ? date : new Date();
+  const year = targetDate.getUTCFullYear();
+  const month = String(targetDate.getUTCMonth() + 1).padStart(2, '0');
+  const day = String(targetDate.getUTCDate()).padStart(2, '0');
+  return {
+    dayOfWeek: targetDate.getUTCDay(),
+    dateStr: `${year}-${month}-${day}`,
+    nowMinutes: (targetDate.getUTCHours() * 60) + targetDate.getUTCMinutes(),
+    timezone: 'utc',
+  };
+}
+
+function isWithinHours(nowMinutes, openTime, closeTime) {
+  if (!Number.isFinite(nowMinutes)) return null;
   const openMinutes = parseTimeToMinutes(openTime);
   const closeMinutes = parseTimeToMinutes(closeTime);
-  if (openMinutes === null || closeMinutes === null) return false;
-
-  const nowMinutes = (date.getHours() * 60) + date.getMinutes();
+  if (openMinutes === null || closeMinutes === null) return null;
   if (openMinutes === closeMinutes) return false;
 
   if (closeMinutes > openMinutes) {
@@ -580,13 +753,6 @@ function isWithinHours(date, openTime, closeTime) {
   }
 
   return nowMinutes >= openMinutes || nowMinutes < closeMinutes;
-}
-
-function formatDateLocal(date) {
-  const year = date.getFullYear();
-  const month = String(date.getMonth() + 1).padStart(2, '0');
-  const day = String(date.getDate()).padStart(2, '0');
-  return `${year}-${month}-${day}`;
 }
 
 function getOutOfHoursMessage() {
@@ -675,25 +841,61 @@ function shouldSendOutOfHours(phoneNumber, now) {
   }
 }
 
-function getBusinessStatus(date) {
+function evaluateBusinessStatusForContext(context) {
   try {
-    const dateStr = formatDateLocal(date);
-    const exception = db.prepare('SELECT closed, open_time, close_time FROM business_exceptions WHERE date = ?').get(dateStr);
+    const exception = db.prepare('SELECT closed, open_time, close_time FROM business_exceptions WHERE date = ?').get(context.dateStr);
     if (exception) {
       if (exception.closed) return { isOpen: false, reason: 'exception' };
       if (exception.open_time && exception.close_time) {
-        return { isOpen: isWithinHours(date, exception.open_time, exception.close_time), reason: 'exception' };
+        const withinException = isWithinHours(context.nowMinutes, exception.open_time, exception.close_time);
+        if (withinException === null) {
+          return { isOpen: true, reason: 'invalid_exception_hours', context };
+        }
+        return { isOpen: withinException, reason: 'exception', context };
       }
-      return { isOpen: false, reason: 'exception' };
+      return { isOpen: false, reason: 'exception', context };
     }
 
-    const hours = db.prepare('SELECT open_time, close_time, enabled FROM business_hours WHERE day = ?').get(date.getDay());
-    if (!hours || !hours.enabled) return { isOpen: false, reason: 'closed' };
-    const isOpen = isWithinHours(date, hours.open_time, hours.close_time);
-    return { isOpen, reason: isOpen ? 'open' : 'closed' };
+    const hours = db.prepare('SELECT open_time, close_time, enabled FROM business_hours WHERE day = ?').get(context.dayOfWeek);
+    const enabled = !!(hours && (hours.enabled === 1 || hours.enabled === true || String(hours.enabled || '') === '1'));
+    if (!hours || !enabled) return { isOpen: false, reason: 'closed', context };
+
+    const isOpen = isWithinHours(context.nowMinutes, hours.open_time, hours.close_time);
+    if (isOpen === null) {
+      return { isOpen: true, reason: 'invalid_hours', context };
+    }
+    return { isOpen, reason: isOpen ? 'open' : 'closed', context };
   } catch (_) {
     return { isOpen: true, reason: 'error' };
   }
+}
+
+function getBusinessStatus(date) {
+  const targetDate = date instanceof Date && !Number.isNaN(date.getTime()) ? date : new Date();
+  const primaryContext = getBusinessDateContext(targetDate);
+  const primaryStatus = evaluateBusinessStatusForContext(primaryContext);
+  if (primaryStatus.isOpen) return primaryStatus;
+
+  // Fallback defensivo para evitar falso "fora do horário" em casos de timezone
+  // divergente entre servidor e configuração.
+  const fixedOffset = fixedTimezoneOffsetMinutes(BUSINESS_TIMEZONE);
+  const fixedContext = fixedOffset == null
+    ? null
+    : buildDateContextFromOffset(targetDate, fixedOffset, `${BUSINESS_TIMEZONE} (fixed)`);
+  const fallbackContexts = [fixedContext, getLocalDateContext(targetDate), getUtcDateContext(targetDate)];
+  for (const context of fallbackContexts) {
+    if (!context || !context.dateStr) continue;
+    const fallbackStatus = evaluateBusinessStatusForContext(context);
+    if (fallbackStatus.isOpen) {
+      return {
+        ...fallbackStatus,
+        reason: `${String(fallbackStatus.reason || 'open')}_fallback`,
+        primaryStatus,
+      };
+    }
+  }
+
+  return primaryStatus;
 }
 
 function ensureActiveTicketForPhone(phoneNumber, contactName) {
@@ -802,21 +1004,6 @@ async function processInboundMessage(msg, value) {
   const businessStatus = getBusinessStatus(now);
   const isBlacklistedForAutoMessages = isPhoneInBlacklist(phoneNumber);
 
-  try {
-    if (!isBlacklistedForAutoMessages && !businessStatus.isOpen && isOutOfHoursEnabled()) {
-      if (shouldSendOutOfHours(phoneNumber, now)) {
-        const outOfHoursMessage = getOutOfHoursMessage();
-        if (outOfHoursMessage) {
-          sendTextMessage(phoneNumber, outOfHoursMessage).catch((err) => {
-            logger.warn(`[AUTO_REPLY] Falha ao enviar mensagem fora do horário (${phoneNumber}): ${err.message}`);
-          });
-        }
-      }
-    }
-  } catch (err) {
-    logger.warn('[AUTO_REPLY] Erro ao avaliar mensagem fora do horário:', err.message || err);
-  }
-
   let messageContent = '';
   let messageType = 'text';
   let mediaUrl = null;
@@ -893,21 +1080,42 @@ async function processInboundMessage(msg, value) {
     } catch (_) {}
   }
 
-  if (!isBlacklistedForAutoMessages && businessStatus.isOpen && isWelcomeMessageEnabled() && shouldSendWelcomeMessage(ticket.id)) {
-    const welcomeMessage = getWelcomeMessage();
-    if (welcomeMessage) {
-      sendTextMessage(phoneNumber, welcomeMessage)
-        .then(() => {
-          try {
-            db.prepare(`
-              INSERT INTO messages (ticket_id, sender, content, message_type, updated_at)
-              VALUES (?, ?, ?, ?, CURRENT_TIMESTAMP)
-            `).run(ticket.id, 'system', welcomeMessage, 'text');
-          } catch (_) {}
-        })
-        .catch((err) => {
-          logger.warn(`[WELCOME] Falha ao enviar boas-vindas (${phoneNumber}): ${err.message || err}`);
-        });
+  if (!isBlacklistedForAutoMessages) {
+    const shouldSendWelcome = (
+      businessStatus.isOpen
+      && isWelcomeMessageEnabled()
+      && shouldSendWelcomeMessage(ticket.id)
+    );
+
+    if (shouldSendWelcome) {
+      const welcomeMessage = getWelcomeMessage();
+      if (welcomeMessage) {
+        sendTextMessage(phoneNumber, welcomeMessage)
+          .then(() => {
+            try {
+              db.prepare(`
+                INSERT INTO messages (ticket_id, sender, content, message_type, updated_at)
+                VALUES (?, ?, ?, ?, CURRENT_TIMESTAMP)
+              `).run(ticket.id, 'system', welcomeMessage, 'text');
+            } catch (_) {}
+          })
+          .catch((err) => {
+            logger.warn(`[WELCOME] Falha ao enviar boas-vindas (${phoneNumber}): ${err.message || err}`);
+          });
+      }
+    } else if (!businessStatus.isOpen && isOutOfHoursEnabled()) {
+      try {
+        if (shouldSendOutOfHours(phoneNumber, now)) {
+          const outOfHoursMessage = getOutOfHoursMessage();
+          if (outOfHoursMessage) {
+            sendTextMessage(phoneNumber, outOfHoursMessage).catch((err) => {
+              logger.warn(`[AUTO_REPLY] Falha ao enviar mensagem fora do horário (${phoneNumber}): ${err.message || err}`);
+            });
+          }
+        }
+      } catch (err) {
+        logger.warn('[AUTO_REPLY] Erro ao avaliar mensagem fora do horário:', err.message || err);
+      }
     }
   }
 

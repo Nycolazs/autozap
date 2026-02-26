@@ -223,6 +223,20 @@ function initSchema(db) {
   `).run();
 
   db.prepare(`
+    CREATE TABLE IF NOT EXISTS ticket_read_state (
+      ticket_id INTEGER NOT NULL,
+      user_id INTEGER NOT NULL,
+      user_type TEXT NOT NULL,
+      last_read_message_id INTEGER NOT NULL DEFAULT 0,
+      last_read_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+      created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+      updated_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+      PRIMARY KEY (ticket_id, user_id, user_type),
+      FOREIGN KEY (ticket_id) REFERENCES tickets(id)
+    );
+  `).run();
+
+  db.prepare(`
     CREATE TABLE IF NOT EXISTS ticket_reminders (
       id INTEGER PRIMARY KEY AUTOINCREMENT,
       ticket_id INTEGER NOT NULL,
@@ -302,10 +316,15 @@ function initSchema(db) {
 
       CREATE INDEX IF NOT EXISTS idx_messages_ticket_created_at ON messages(ticket_id, created_at);
       CREATE INDEX IF NOT EXISTS idx_messages_ticket_updated_at ON messages(ticket_id, updated_at);
+      CREATE INDEX IF NOT EXISTS idx_messages_ticket_id_desc ON messages(ticket_id, id DESC);
       CREATE INDEX IF NOT EXISTS idx_messages_ticket_sender ON messages(ticket_id, sender);
+      CREATE INDEX IF NOT EXISTS idx_messages_ticket_sender_id ON messages(ticket_id, sender, id);
       CREATE INDEX IF NOT EXISTS idx_messages_reply_to_id ON messages(reply_to_id);
       CREATE INDEX IF NOT EXISTS idx_messages_whatsapp_message_id ON messages(whatsapp_message_id);
       CREATE INDEX IF NOT EXISTS idx_messages_ticket_status ON messages(ticket_id, message_status);
+
+      CREATE INDEX IF NOT EXISTS idx_ticket_read_state_user ON ticket_read_state(user_id, user_type);
+      CREATE INDEX IF NOT EXISTS idx_ticket_read_state_ticket ON ticket_read_state(ticket_id);
 
       CREATE INDEX IF NOT EXISTS idx_reminders_ticket_id ON ticket_reminders(ticket_id);
       CREATE INDEX IF NOT EXISTS idx_reminders_seller_id ON ticket_reminders(seller_id);

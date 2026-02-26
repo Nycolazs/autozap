@@ -192,6 +192,13 @@ export function updateTicketStatus(ticketId: number, status: Ticket['status']): 
   );
 }
 
+export function markTicketReadByAgent(ticketId: number): Promise<{ success: true; updated?: number; lastReadMessageId?: number }> {
+  return requestJson<{ success: true; updated?: number; lastReadMessageId?: number }>(
+    `/tickets/${encodeURIComponent(ticketId)}/mark-read-by-agent`,
+    { method: 'POST' }
+  );
+}
+
 export function listAssignees(): Promise<Assignee[]> {
   return requestJson<Assignee[]>('/assignees', { method: 'GET' });
 }

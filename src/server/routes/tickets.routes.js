@@ -52,6 +52,77 @@ function createTicketsRouter({
 }) {
   const router = express.Router();
 
+  function getTicketReadIdentity(req) {
+    const userId = Number(req && req.userId);
+    if (!Number.isFinite(userId) || userId <= 0) return null;
+    return {
+      userId,
+      userType: req && req.userType === 'admin' ? 'admin' : 'seller',
+    };
+  }
+
+  function getUnreadSqlContext(req, ticketAlias = 't') {
+    const identity = getTicketReadIdentity(req);
+    if (!identity) {
+      return {
+        joinSql: '',
+        selectSql: '0 AS unread_count',
+        params: [],
+      };
+    }
+
+    return {
+      joinSql: `LEFT JOIN ticket_read_state tr ON tr.ticket_id = ${ticketAlias}.id AND tr.user_id = ? AND tr.user_type = ?`,
+      selectSql: `COALESCE((
+        SELECT COUNT(1)
+        FROM messages m
+        WHERE m.ticket_id = ${ticketAlias}.id
+          AND m.sender = 'client'
+          AND m.id > COALESCE(tr.last_read_message_id, 0)
+      ), 0) AS unread_count`,
+      params: [identity.userId, identity.userType],
+    };
+  }
+
+  function normalizeUnreadCount(value) {
+    const numeric = Number(value || 0);
+    if (!Number.isFinite(numeric) || numeric <= 0) return 0;
+    return Math.floor(numeric);
+  }
+
+  function getLastMessageSelectSql(ticketAlias = 't') {
+    return `
+      (
+        SELECT m.content
+        FROM messages m
+        WHERE m.ticket_id = ${ticketAlias}.id
+        ORDER BY m.id DESC
+        LIMIT 1
+      ) AS last_message_content,
+      COALESCE((
+        SELECT m.message_type
+        FROM messages m
+        WHERE m.ticket_id = ${ticketAlias}.id
+        ORDER BY m.id DESC
+        LIMIT 1
+      ), 'text') AS last_message_type,
+      COALESCE((
+        SELECT m.sender
+        FROM messages m
+        WHERE m.ticket_id = ${ticketAlias}.id
+        ORDER BY m.id DESC
+        LIMIT 1
+      ), 'client') AS last_message_sender,
+      (
+        SELECT m.created_at
+        FROM messages m
+        WHERE m.ticket_id = ${ticketAlias}.id
+        ORDER BY m.id DESC
+        LIMIT 1
+      ) AS last_message_at
+    `;
+  }
+
   function normalizeUploadAudioMime(file) {
     const rawMime = String((file && file.mimetype) || '').toLowerCase().trim();
     if (!rawMime) return 'audio/ogg';
@@ -363,6 +434,7 @@ function createTicketsRouter({
     if (!phone) return res.status(400).json({ error: 'phone é obrigatório' });
 
     try {
+      const unreadCtx = getUnreadSqlContext(req);
       const ticket = db.prepare(
         `SELECT t.*,
                 s.name as seller_name,
@@ -370,16 +442,22 @@ function createTicketsRouter({
                   WHEN cp.avatar_url LIKE '/profile-picture/%/image%' THEN NULL
                   WHEN cp.avatar_url LIKE '/__api/profile-picture/%/image%' THEN NULL
                   ELSE cp.avatar_url
-                END as avatar_url
+                END as avatar_url,
+                ${unreadCtx.selectSql},
+                ${getLastMessageSelectSql('t')}
          FROM tickets t
          LEFT JOIN sellers s ON t.seller_id = s.id
          LEFT JOIN contact_profiles cp ON cp.phone = t.phone
+         ${unreadCtx.joinSql}
          WHERE t.phone = ?
            AND t.status NOT IN ('resolvido','encerrado')
          ORDER BY t.id DESC
          LIMIT 1`
-      ).get(phone);
-      return res.json(ticket || null);
+      ).get(...unreadCtx.params, phone);
+
+      if (!ticket) return res.json(null);
+      ticket.unread_count = normalizeUnreadCount(ticket.unread_count);
+      return res.json(ticket);
     } catch (_error) {
       return res.status(500).json({ error: 'Erro ao buscar ticket ativo' });
     }
@@ -394,6 +472,7 @@ function createTicketsRouter({
     const offset = Math.max(parseInt(req.query.offset, 10) || 0, 0);
 
     try {
+      const unreadCtx = getUnreadSqlContext(req);
       const tickets = db.prepare(
         `
           SELECT t.*,
@@ -402,15 +481,22 @@ function createTicketsRouter({
                    WHEN cp.avatar_url LIKE '/profile-picture/%/image%' THEN NULL
                    WHEN cp.avatar_url LIKE '/__api/profile-picture/%/image%' THEN NULL
                    ELSE cp.avatar_url
-                 END as avatar_url
+                 END as avatar_url,
+                 ${unreadCtx.selectSql},
+                 ${getLastMessageSelectSql('t')}
           FROM tickets t
           LEFT JOIN sellers s ON t.seller_id = s.id
           LEFT JOIN contact_profiles cp ON cp.phone = t.phone
+          ${unreadCtx.joinSql}
           WHERE t.phone = ?
-          ORDER BY t.id DESC
+          ORDER BY t.id DESC, t.updated_at DESC
           LIMIT ? OFFSET ?
         `
-      ).all(phone, limit, offset);
+      ).all(...unreadCtx.params, phone, limit, offset);
+
+      for (const ticket of tickets) {
+        ticket.unread_count = normalizeUnreadCount(ticket.unread_count);
+      }
 
       return res.json(tickets);
     } catch (_error) {
@@ -422,6 +508,7 @@ function createTicketsRouter({
     const limit = Math.min(Math.max(parseInt(req.query.limit, 10) || 200, 1), 500);
     const offset = Math.max(parseInt(req.query.offset, 10) || 0, 0);
 
+    const unreadCtx = getUnreadSqlContext(req);
     const tickets = db.prepare(`
       SELECT
         t.*,
@@ -429,9 +516,12 @@ function createTicketsRouter({
           WHEN cp.avatar_url LIKE '/profile-picture/%/image%' THEN NULL
           WHEN cp.avatar_url LIKE '/__api/profile-picture/%/image%' THEN NULL
           ELSE cp.avatar_url
-        END as avatar_url
+        END as avatar_url,
+        ${unreadCtx.selectSql},
+        ${getLastMessageSelectSql('t')}
       FROM tickets t
       LEFT JOIN contact_profiles cp ON cp.phone = t.phone
+      ${unreadCtx.joinSql}
       WHERE (
         t.phone IS NOT NULL
         AND t.phone != ''
@@ -439,9 +529,13 @@ function createTicketsRouter({
         AND t.phone NOT GLOB '*[^0-9]*'
         AND length(t.phone) BETWEEN 8 AND 25
       )
-      ORDER BY t.updated_at DESC
+      ORDER BY t.updated_at DESC, t.id DESC
       LIMIT ? OFFSET ?
-    `).all(limit, offset);
+    `).all(...unreadCtx.params, limit, offset);
+
+    for (const ticket of tickets) {
+      ticket.unread_count = normalizeUnreadCount(ticket.unread_count);
+    }
 
     return res.json(tickets);
   });
@@ -450,6 +544,7 @@ function createTicketsRouter({
   router.get('/tickets/:id', requireAuth, (req, res) => {
     const { id } = req.params;
     try {
+      const unreadCtx = getUnreadSqlContext(req);
       const ticket = db.prepare(
         `SELECT t.*,
                 s.name as seller_name,
@@ -457,14 +552,18 @@ function createTicketsRouter({
                   WHEN cp.avatar_url LIKE '/profile-picture/%/image%' THEN NULL
                   WHEN cp.avatar_url LIKE '/__api/profile-picture/%/image%' THEN NULL
                   ELSE cp.avatar_url
-                END as avatar_url
+                END as avatar_url,
+                ${unreadCtx.selectSql},
+                ${getLastMessageSelectSql('t')}
          FROM tickets t
          LEFT JOIN sellers s ON t.seller_id = s.id
          LEFT JOIN contact_profiles cp ON cp.phone = t.phone
+         ${unreadCtx.joinSql}
          WHERE t.id = ?`
-      ).get(id);
+      ).get(...unreadCtx.params, id);
 
       if (!ticket) return res.status(404).json({ error: 'Ticket não encontrado' });
+      ticket.unread_count = normalizeUnreadCount(ticket.unread_count);
       return res.json(ticket);
     } catch (_error) {
       return res.status(500).json({ error: 'Erro ao buscar ticket' });
@@ -536,7 +635,7 @@ function createTicketsRouter({
     const { id } = req.params;
 
     try {
-      const ticket = db.prepare('SELECT id, phone FROM tickets WHERE id = ?').get(id);
+      const ticket = db.prepare('SELECT id, phone, status FROM tickets WHERE id = ?').get(id);
       if (!ticket) {
         return res.status(404).json({ error: 'Ticket não encontrado' });
       }
@@ -551,6 +650,30 @@ function createTicketsRouter({
           AND (message_status IS NULL OR message_status IN ('sent', 'delivered'))
       `).run(id);
 
+      const readIdentity = getTicketReadIdentity(req);
+      let lastReadMessageId = 0;
+      if (readIdentity) {
+        const latestMessage = db.prepare(`
+          SELECT COALESCE(MAX(id), 0) AS last_id
+          FROM messages
+          WHERE ticket_id = ?
+        `).get(id);
+        lastReadMessageId = Number((latestMessage && latestMessage.last_id) || 0);
+
+        db.prepare(`
+          INSERT INTO ticket_read_state (ticket_id, user_id, user_type, last_read_message_id, last_read_at, updated_at)
+          VALUES (?, ?, ?, ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
+          ON CONFLICT(ticket_id, user_id, user_type) DO UPDATE SET
+            last_read_message_id = CASE
+              WHEN excluded.last_read_message_id > ticket_read_state.last_read_message_id
+                THEN excluded.last_read_message_id
+              ELSE ticket_read_state.last_read_message_id
+            END,
+            last_read_at = CURRENT_TIMESTAMP,
+            updated_at = CURRENT_TIMESTAMP
+        `).run(id, readIdentity.userId, readIdentity.userType, lastReadMessageId);
+      }
+
       try {
         events.emit('message', {
           ticketId: Number(id),
@@ -561,7 +684,20 @@ function createTicketsRouter({
         });
       } catch (_) {}
 
-      return res.json({ success: true, updated: Number(result && result.changes ? result.changes : 0) });
+      try {
+        events.emit('ticket', {
+          ticketId: Number(id),
+          phone: ticket.phone,
+          status: ticket.status,
+          ts: Date.now(),
+        });
+      } catch (_) {}
+
+      return res.json({
+        success: true,
+        updated: Number(result && result.changes ? result.changes : 0),
+        lastReadMessageId,
+      });
     } catch (_error) {
       return res.status(500).json({ error: 'Erro ao marcar mensagens como lidas' });
     }
@@ -1606,6 +1742,7 @@ function createTicketsRouter({
     const includeClosed = String(req.query.includeClosed || '') === '1';
 
     try {
+      const unreadCtx = getUnreadSqlContext(req);
       const tickets = db.prepare(`
         SELECT t.*,
                s.name as seller_name,
@@ -1613,10 +1750,13 @@ function createTicketsRouter({
                  WHEN cp.avatar_url LIKE '/profile-picture/%/image%' THEN NULL
                  WHEN cp.avatar_url LIKE '/__api/profile-picture/%/image%' THEN NULL
                  ELSE cp.avatar_url
-               END as avatar_url
+               END as avatar_url,
+               ${unreadCtx.selectSql},
+               ${getLastMessageSelectSql('t')}
         FROM tickets t
         LEFT JOIN sellers s ON t.seller_id = s.id
         LEFT JOIN contact_profiles cp ON cp.phone = t.phone
+        ${unreadCtx.joinSql}
         WHERE (t.seller_id = ? OR t.seller_id IS NULL OR t.status = 'aguardando')
           ${includeClosed ? '' : "AND t.status != 'resolvido' AND t.status != 'encerrado'"}
           AND (
@@ -1626,9 +1766,13 @@ function createTicketsRouter({
             AND t.phone NOT GLOB '*[^0-9]*'
             AND length(t.phone) BETWEEN 8 AND 25
           )
-        ORDER BY t.updated_at DESC
+        ORDER BY t.updated_at DESC, t.id DESC
         LIMIT ? OFFSET ?
-      `).all(sellerId === '0' ? null : sellerId, limit, offset);
+      `).all(...unreadCtx.params, sellerId === '0' ? null : sellerId, limit, offset);
+
+      for (const ticket of tickets) {
+        ticket.unread_count = normalizeUnreadCount(ticket.unread_count);
+      }
 
       return res.json(tickets);
     } catch (_error) {
@@ -1731,6 +1875,7 @@ function createTicketsRouter({
       }
 
       const whereSql = whereClauses.length ? `WHERE ${whereClauses.join(' AND ')}` : '';
+      const unreadCtx = getUnreadSqlContext(req);
 
       const tickets = db.prepare(`
         SELECT t.*,
@@ -1739,14 +1884,21 @@ function createTicketsRouter({
                  WHEN cp.avatar_url LIKE '/profile-picture/%/image%' THEN NULL
                  WHEN cp.avatar_url LIKE '/__api/profile-picture/%/image%' THEN NULL
                  ELSE cp.avatar_url
-               END as avatar_url
+                 END as avatar_url,
+                 ${unreadCtx.selectSql},
+                 ${getLastMessageSelectSql('t')}
         FROM tickets t
         LEFT JOIN sellers s ON t.seller_id = s.id
         LEFT JOIN contact_profiles cp ON cp.phone = t.phone
+        ${unreadCtx.joinSql}
         ${whereSql}
-        ORDER BY t.updated_at DESC
+        ORDER BY t.updated_at DESC, t.id DESC
         LIMIT ? OFFSET ?
-      `).all(...params, limit, offset);
+      `).all(...unreadCtx.params, ...params, limit, offset);
+
+      for (const ticket of tickets) {
+        ticket.unread_count = normalizeUnreadCount(ticket.unread_count);
+      }
 
       return res.json(tickets);
     } catch (_error) {

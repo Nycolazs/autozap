@@ -43,6 +43,11 @@ export interface Ticket {
   seller_id?: number | null;
   seller_name?: string | null;
   avatar_url?: string | null;
+  unread_count?: number | null;
+  last_message_content?: string | null;
+  last_message_type?: MessageType | null;
+  last_message_sender?: MessageSender | null;
+  last_message_at?: string | null;
   status: TicketStatus;
   updated_at: string;
   created_at?: string;

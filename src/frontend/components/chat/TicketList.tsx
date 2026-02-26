@@ -39,7 +39,7 @@ function statusClass(status: Ticket['status']): string {
 function displayName(ticket: Ticket): string {
   const contact = String(ticket.contact_name || '').trim();
   if (contact) return contact;
-  return String(ticket.phone || '').trim();
+  return 'Cliente';
 }
 
 function avatarInitials(ticket: Ticket): string {
@@ -52,6 +52,58 @@ function avatarInitials(ticket: Ticket): string {
   if (!tokens.length) return '?';
   if (tokens.length === 1) return tokens[0].slice(0, 2).toUpperCase();
   return `${tokens[0].charAt(0)}${tokens[1].charAt(0)}`.toUpperCase();
+}
+
+function unreadLabel(ticket: Ticket): string | null {
+  const unread = Number(ticket.unread_count || 0);
+  if (!Number.isFinite(unread) || unread <= 0) return null;
+  if (unread > 99) return '99+';
+  return String(Math.floor(unread));
+}
+
+function normalizeMessageType(type: unknown): string {
+  const normalized = String(type || '').trim().toLowerCase();
+  if (!normalized) return 'text';
+  if (normalized === 'image') return 'image';
+  if (normalized === 'audio') return 'audio';
+  if (normalized === 'video') return 'video';
+  if (normalized === 'sticker') return 'sticker';
+  if (normalized === 'document') return 'document';
+  if (normalized === 'system') return 'system';
+  return 'text';
+}
+
+function mediaTypeLabel(type: string): string {
+  if (type === 'image') return 'Imagem';
+  if (type === 'audio') return 'Áudio';
+  if (type === 'video') return 'Vídeo';
+  if (type === 'sticker') return 'Figurinha';
+  if (type === 'document') return 'Documento';
+  if (type === 'system') return 'Atualização';
+  return '';
+}
+
+function previewLabel(ticket: Ticket): string {
+  const type = normalizeMessageType(ticket.last_message_type);
+  const rawContent = String(ticket.last_message_content || '').replace(/\s+/g, ' ').trim();
+  const sender = String(ticket.last_message_sender || '').trim().toLowerCase();
+  const hasLastMessageData = Boolean(
+    String(ticket.last_message_at || '').trim()
+    || rawContent
+    || String(ticket.last_message_type || '').trim()
+  );
+
+  let preview = rawContent;
+  if (!preview) {
+    preview = mediaTypeLabel(type);
+  } else if (type !== 'text') {
+    const mediaLabel = mediaTypeLabel(type);
+    if (mediaLabel) preview = `${mediaLabel}: ${preview}`;
+  }
+
+  if (!preview) return hasLastMessageData ? 'Sem mensagens' : '';
+  if (sender === 'agent') return `Você: ${preview}`;
+  return preview;
 }
 
 export function TicketList({
@@ -137,6 +189,9 @@ export function TicketList({
           const avatarUrl = avatars[phone] || resolveProfilePictureUrl(phone, ticket.avatar_url || '');
           const avatarKey = `${ticket.id}:${avatarUrl}`;
           const showAvatarImage = !!avatarUrl && !failedAvatarByKey[avatarKey];
+          const unread = unreadLabel(ticket);
+          const preview = previewLabel(ticket);
+          const activityAt = ticket.last_message_at || ticket.updated_at;
           return (
             <button
               type="button"
@@ -166,16 +221,16 @@ export function TicketList({
               <span className={styles.ticketMain}>
                 <span className={styles.ticketHeading}>
                   <span className={styles.ticketName}>{displayName(ticket)}</span>
-                  <span className={styles.ticketPhoneDivider} aria-hidden="true">•</span>
-                  <span className={styles.ticketPhone}>{ticket.phone}</span>
                 </span>
+                {preview ? <span className={styles.ticketPreview}>{preview}</span> : null}
                 <span className={styles.ticketMeta}>
                   <span className={`${styles.statusBadge} ${statusClass(ticket.status)}`}>
                     {statusLabel(ticket.status)}
                   </span>
                   <span className={styles.ticketDateTime}>
-                    <span className={styles.ticketDate}>{formatDate(ticket.updated_at)}</span>
-                    <span className={styles.ticketTime}>{formatTime(ticket.updated_at)}</span>
+                    <span className={styles.ticketDate}>{formatDate(activityAt)}</span>
+                    <span className={styles.ticketTime}>{formatTime(activityAt)}</span>
+                    {unread ? <span className={styles.ticketUnreadBadge}>{unread}</span> : null}
                   </span>
                 </span>
               </span>
