@@ -25,7 +25,7 @@ import {
   updateTicketStatus,
 } from '@/src/frontend/lib/chatApi';
 import { ApiRequestError } from '@/src/frontend/lib/http';
-import { clearAuthToken, resolveProfilePictureUrl } from '@/src/frontend/lib/runtime';
+import { clearAuthToken, getApiBase, getAuthToken, resolveProfilePictureUrl } from '@/src/frontend/lib/runtime';
 import { useInterval } from '@/src/frontend/hooks/useInterval';
 import { useToast } from '@/src/frontend/hooks/useToast';
 import type { ToastType } from '@/src/frontend/hooks/useToast';
@@ -171,6 +171,35 @@ function sortMessagesChronologically(list: ChatMessage[]): ChatMessage[] {
   });
 }
 
+function resolveRealtimeSocketUrls(): string[] {
+  if (typeof window === 'undefined') return [];
+
+  const token = getAuthToken();
+  const candidates = new Set<string>();
+  const apiBase = String(getApiBase() || '').trim();
+  if (apiBase) candidates.add(apiBase);
+  const currentOrigin = String(window.location.origin || '').trim();
+  if (currentOrigin) candidates.add(currentOrigin);
+
+  const urls: string[] = [];
+  for (const rawBase of candidates) {
+    try {
+      const url = new URL(rawBase);
+      if (url.protocol === 'http:') url.protocol = 'ws:';
+      else if (url.protocol === 'https:') url.protocol = 'wss:';
+      else continue;
+      url.pathname = '/ws';
+      url.search = '';
+      if (token) url.searchParams.set('auth', token);
+      urls.push(url.toString());
+    } catch (_) {
+      // noop
+    }
+  }
+
+  return urls;
+}
+
 function sortQuickMessagesByNewest(list: QuickMessage[]): QuickMessage[] {
   return [...list].sort((a, b) => {
     const aTs = Date.parse(String(a.updated_at || a.created_at || '')) || 0;
@@ -314,6 +343,7 @@ export default function AgentPage() {
   const [selectedTicketId, setSelectedTicketId] = useState<number | null>(null);
   const [selectedTicketOverride, setSelectedTicketOverride] = useState<Ticket | null>(null);
   const [isPageVisible, setIsPageVisible] = useState(true);
+  const [localUnreadVersion, setLocalUnreadVersion] = useState(0);
 
   const [messages, setMessages] = useState<ChatMessage[]>([]);
   const [messagesLoading, setMessagesLoading] = useState(false);
@@ -343,6 +373,10 @@ export default function AgentPage() {
   const lastMarkReadAtRef = useRef<Record<number, number>>({});
   const previewFallbackByTicketRef = useRef<Record<number, TicketPreviewFallback>>({});
   const previewFetchInFlightRef = useRef<Record<number, Promise<void>>>({});
+  const localUnreadByTicketRef = useRef<Record<number, number>>({});
+  const lastTicketUpdatedAtRef = useRef<Record<number, number>>({});
+  const localUnreadInitializedRef = useRef(false);
+  const realtimeRefreshTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const deepLinkHandledRef = useRef(false);
 
   const queryTicketId = useMemo(() => {
@@ -383,6 +417,11 @@ export default function AgentPage() {
     if (!activeTicket || latestContactTicketId == null) return false;
     return Number(activeTicket.id) !== Number(latestContactTicketId);
   }, [activeTicket, latestContactTicketId]);
+
+  const unreadByTicketSnapshot = useMemo(
+    () => ({ ...localUnreadByTicketRef.current }),
+    [localUnreadVersion]
+  );
 
   const showToast = useCallback((message: string, type: ToastType = 'info') => {
     pushToast(message, type);
@@ -600,10 +639,76 @@ export default function AgentPage() {
       const baseList = Array.isArray(list) ? list : [];
       const ordered = sortTicketsByActivity(baseList.map((ticket) => mergeTicketWithPreviewFallback(ticket)));
       const ticketIds = new Set(ordered.map((ticket) => Number(ticket.id)));
+      let localUnreadChanged = false;
+      const seenTicketIds = new Set<number>();
+
+      for (const ticket of ordered) {
+        const ticketId = Number(ticket.id || 0);
+        if (!Number.isFinite(ticketId) || ticketId <= 0) continue;
+        seenTicketIds.add(ticketId);
+
+        const serverUnreadRaw = ticket.unread_count;
+        const serverUnreadParsed = Number(serverUnreadRaw);
+        const hasServerUnread = (
+          serverUnreadRaw !== null
+          && serverUnreadRaw !== undefined
+          && Number.isFinite(serverUnreadParsed)
+        );
+        const serverUnread = hasServerUnread ? Math.max(0, Math.floor(serverUnreadParsed)) : 0;
+        const updatedAtMs = parseSqliteTimestamp(ticketActivityAt(ticket));
+        const previousUpdatedAtMs = Number(lastTicketUpdatedAtRef.current[ticketId] || 0);
+
+        if (hasServerUnread && serverUnread > 0) {
+          if (Number(localUnreadByTicketRef.current[ticketId] || 0) > 0) {
+            localUnreadByTicketRef.current[ticketId] = 0;
+            localUnreadChanged = true;
+          }
+          if (updatedAtMs > previousUpdatedAtMs) {
+            lastTicketUpdatedAtRef.current[ticketId] = updatedAtMs;
+          }
+          continue;
+        }
+
+        if (!localUnreadInitializedRef.current || previousUpdatedAtMs <= 0) {
+          lastTicketUpdatedAtRef.current[ticketId] = updatedAtMs;
+          continue;
+        }
+
+        if (updatedAtMs > (previousUpdatedAtMs + 500)) {
+          if (Number(selectedTicketIdRef.current || 0) !== ticketId) {
+            localUnreadByTicketRef.current[ticketId] = Number(localUnreadByTicketRef.current[ticketId] || 0) + 1;
+            localUnreadChanged = true;
+          }
+          lastTicketUpdatedAtRef.current[ticketId] = updatedAtMs;
+          continue;
+        }
+
+        if (updatedAtMs > previousUpdatedAtMs) {
+          lastTicketUpdatedAtRef.current[ticketId] = updatedAtMs;
+        }
+      }
+
       for (const rawId of Object.keys(previewFallbackByTicketRef.current)) {
         const ticketId = Number(rawId);
         if (!Number.isFinite(ticketId) || ticketIds.has(ticketId)) continue;
         delete previewFallbackByTicketRef.current[ticketId];
+      }
+      for (const rawId of Object.keys(localUnreadByTicketRef.current)) {
+        const ticketId = Number(rawId);
+        if (!Number.isFinite(ticketId) || seenTicketIds.has(ticketId)) continue;
+        delete localUnreadByTicketRef.current[ticketId];
+        localUnreadChanged = true;
+      }
+      for (const rawId of Object.keys(lastTicketUpdatedAtRef.current)) {
+        const ticketId = Number(rawId);
+        if (!Number.isFinite(ticketId) || seenTicketIds.has(ticketId)) continue;
+        delete lastTicketUpdatedAtRef.current[ticketId];
+      }
+      if (!localUnreadInitializedRef.current) {
+        localUnreadInitializedRef.current = true;
+      }
+      if (localUnreadChanged) {
+        setLocalUnreadVersion((value) => value + 1);
       }
       setTickets((current) => (sameTicketSnapshot(current, ordered) ? current : ordered));
       setAvatars((prev) => {
@@ -672,6 +777,10 @@ export default function AgentPage() {
     const task = (async () => {
       try {
         await markTicketReadByAgent(normalizedTicketId);
+        if (Number(localUnreadByTicketRef.current[normalizedTicketId] || 0) > 0) {
+          localUnreadByTicketRef.current[normalizedTicketId] = 0;
+          setLocalUnreadVersion((value) => value + 1);
+        }
         setTickets((current) => current.map((ticket) => {
           if (Number(ticket.id) !== normalizedTicketId) return ticket;
           if (Number(ticket.unread_count || 0) <= 0) return ticket;
@@ -1320,6 +1429,88 @@ export default function AgentPage() {
     };
   }, [loadPreviewFallbackForTicket, session, tickets]);
 
+  const queueRealtimeRefresh = useCallback(() => {
+    if (realtimeRefreshTimeoutRef.current) return;
+    realtimeRefreshTimeoutRef.current = setTimeout(() => {
+      realtimeRefreshTimeoutRef.current = null;
+      void loadTickets(true);
+    }, 120);
+  }, [loadTickets]);
+
+  useEffect(() => {
+    if (!session) return;
+
+    const wsUrls = resolveRealtimeSocketUrls();
+    if (!wsUrls.length) return;
+
+    let active = true;
+    let ws: WebSocket | null = null;
+    let reconnectTimer: ReturnType<typeof setTimeout> | null = null;
+    let attempt = 0;
+
+    const scheduleReconnect = () => {
+      if (!active || reconnectTimer) return;
+      reconnectTimer = setTimeout(() => {
+        reconnectTimer = null;
+        connect();
+      }, 1200);
+    };
+
+    const handleRealtimeMessage = (raw: string) => {
+      let parsed: { type?: string } | null = null;
+      try {
+        parsed = JSON.parse(String(raw || '')) as { type?: string };
+      } catch (_) {
+        parsed = null;
+      }
+      if (!parsed || !parsed.type) return;
+      if (parsed.type !== 'message' && parsed.type !== 'ticket') return;
+      queueRealtimeRefresh();
+    };
+
+    const connect = () => {
+      if (!active) return;
+
+      const wsUrl = wsUrls[attempt % wsUrls.length];
+      attempt += 1;
+
+      try {
+        ws = new WebSocket(wsUrl);
+      } catch (_) {
+        scheduleReconnect();
+        return;
+      }
+
+      ws.onmessage = (event) => {
+        if (!active) return;
+        handleRealtimeMessage(String((event && event.data) || ''));
+      };
+
+      ws.onerror = () => {
+        // noop
+      };
+
+      ws.onclose = () => {
+        if (!active) return;
+        scheduleReconnect();
+      };
+    };
+
+    connect();
+
+    return () => {
+      active = false;
+      if (reconnectTimer) clearTimeout(reconnectTimer);
+      if (realtimeRefreshTimeoutRef.current) {
+        clearTimeout(realtimeRefreshTimeoutRef.current);
+        realtimeRefreshTimeoutRef.current = null;
+      }
+      if (ws) {
+        try { ws.close(); } catch (_) {}
+      }
+    };
+  }, [queueRealtimeRefresh, session]);
+
   useEffect(() => {
     if (typeof window === 'undefined') return;
     const media = window.matchMedia('(max-width: 980px)');
@@ -1389,7 +1580,7 @@ export default function AgentPage() {
   useInterval(() => {
     if (!session || !isPageVisible) return;
     void loadTickets(true);
-  }, session && isPageVisible ? 6500 : null);
+  }, session && isPageVisible ? 1200 : null);
 
   useInterval(() => {
     if (!session || !selectedTicketId || !isPageVisible) return;
@@ -1407,6 +1598,10 @@ export default function AgentPage() {
   }, session && isPageVisible ? 15000 : null);
 
   const handleSelectTicket = useCallback((ticketId: number) => {
+    if (Number(localUnreadByTicketRef.current[ticketId] || 0) > 0) {
+      localUnreadByTicketRef.current[ticketId] = 0;
+      setLocalUnreadVersion((value) => value + 1);
+    }
     setSelectedTicketId(ticketId);
     setSelectedTicketOverride(null);
     if (isMobileLayout) {
@@ -1444,6 +1639,7 @@ export default function AgentPage() {
           loading={ticketsLoading}
           isConnected={connectionOnline}
           avatars={avatars}
+          localUnreadByTicket={unreadByTicketSnapshot}
           userName={session.userName}
           isAdmin={session.userType === 'admin'}
           onToggleClosed={setIncludeClosed}

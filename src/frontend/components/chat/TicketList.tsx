@@ -11,6 +11,7 @@ type TicketListProps = {
   loading: boolean;
   isConnected: boolean;
   avatars: Record<string, string>;
+  localUnreadByTicket?: Record<number, number>;
   userName: string;
   isAdmin: boolean;
   onToggleClosed: (value: boolean) => void;
@@ -54,11 +55,16 @@ function avatarInitials(ticket: Ticket): string {
   return `${tokens[0].charAt(0)}${tokens[1].charAt(0)}`.toUpperCase();
 }
 
-function unreadLabel(ticket: Ticket): string | null {
-  const unread = Number(ticket.unread_count || 0);
+function unreadLabel(ticket: Ticket, localUnreadByTicket?: Record<number, number>): string | null {
+  const serverUnread = Number(ticket.unread_count || 0);
+  const localUnread = Number(localUnreadByTicket && localUnreadByTicket[Number(ticket.id)] || 0);
+  const unread = Math.max(
+    Number.isFinite(serverUnread) ? Math.floor(serverUnread) : 0,
+    Number.isFinite(localUnread) ? Math.floor(localUnread) : 0
+  );
   if (!Number.isFinite(unread) || unread <= 0) return null;
   if (unread > 99) return '99+';
-  return String(Math.floor(unread));
+  return String(unread);
 }
 
 function normalizeMessageType(type: unknown): string {
@@ -113,6 +119,7 @@ export function TicketList({
   loading,
   isConnected,
   avatars,
+  localUnreadByTicket,
   userName,
   isAdmin,
   onToggleClosed,
@@ -189,7 +196,7 @@ export function TicketList({
           const avatarUrl = avatars[phone] || resolveProfilePictureUrl(phone, ticket.avatar_url || '');
           const avatarKey = `${ticket.id}:${avatarUrl}`;
           const showAvatarImage = !!avatarUrl && !failedAvatarByKey[avatarKey];
-          const unread = unreadLabel(ticket);
+          const unread = unreadLabel(ticket, localUnreadByTicket);
           const preview = previewLabel(ticket);
           const activityAt = ticket.last_message_at || ticket.updated_at;
           return (
