@@ -11,7 +11,8 @@
     },
     "updates": {
       "checkAutomatically": "ON_LOAD",
-      "fallbackToCacheTimeout": 0
+      "fallbackToCacheTimeout": 0,
+      "url": "https://u.expo.dev/15338cc9-96ee-42c3-b4a8-7235866e3cda"
     },
     "newArchEnabled": true,
     "splash": {
