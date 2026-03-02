@@ -1,6 +1,6 @@
 # AutoZap (Desktop + Mobile Expo + Firebase + WhatsApp Cloud API)
 
-AutoZap roda como **aplicativo desktop** (macOS/Windows) e **aplicativo mobile Expo (React Native)** com backend em Next.js/Express, integração oficial do WhatsApp (Cloud API) e persistência sincronizada com **Firebase Firestore**.
+AutoZap roda como **aplicativo desktop** (macOS/Windows) e **aplicativo mobile Expo (React Native)** com backend em Next.js/Express, integração oficial do WhatsApp (Cloud API) e persistência sincronizada com **Firebase Firestore**, com deploy de produção recomendado em **Oracle Cloud Free VM**.
 
 ## Arquitetura
 
@@ -94,20 +94,60 @@ Depois, no Expo Go, escaneie o QR Code do Metro.
 
 Mais detalhes de build mobile estão em `mobile-expo/README.md`.
 
-## Distribuição sem configuração do cliente
+## Produção (Oracle Free VM + Firebase)
 
 Fluxo recomendado:
 
-- Você mantém backend + webhook em Firebase Functions/Cloud Run.
-- Segredos (`WA_CLOUD_ACCESS_TOKEN`, `WA_CLOUD_APP_SECRET`, service account do Firebase) ficam só no servidor.
-- O cliente só baixa `.exe`/`.dmg`, abre e faz login.
+- Backend/API rodando na sua VM free da Oracle (Node.js + PM2 + Nginx).
+- Firebase usado para persistência central (Firestore), sem depender de Cloud Run.
+- Webhook oficial da Meta aponta para sua API (`/whatsapp/webhook`) na própria VM.
+- Segredos (`WA_CLOUD_ACCESS_TOKEN`, `WA_CLOUD_APP_SECRET`, service account do Firebase) ficam somente no servidor.
 
-Scripts úteis:
+Scripts úteis do projeto:
 
 ```bash
-npm run desktop:config:local
-npm run desktop:config:cloud
+npm run oracle:setup:vm
+npm run oracle:deploy
+npm run oracle:pm2:reload
 ```
+
+Arquivos de apoio:
+
+- `scripts/oracle/setup-vm.sh`
+- `scripts/oracle/deploy.sh`
+- `scripts/oracle/pm2.ecosystem.config.cjs`
+- `scripts/oracle/nginx-autozap.conf.example`
+
+### Passo a passo resumido (Oracle VM)
+
+```bash
+# 1) preparar VM (Oracle Linux 9, Ubuntu ou Debian)
+sudo APP_USER=autozap APP_DIR=/opt/autozap bash ./scripts/oracle/setup-vm.sh
+
+# 2) clonar projeto na VM e configurar .env de produção
+sudo -u autozap git clone https://github.com/Nycolazs/autozap.git /opt/autozap
+sudo -u autozap cp /opt/autozap/.env.example /opt/autozap/.env
+
+# 3) deploy e subida da API em PM2
+sudo -u autozap APP_DIR=/opt/autozap BRANCH=main bash /opt/autozap/scripts/oracle/deploy.sh
+```
+
+Configuração do Nginx e TLS:
+
+```bash
+sudo cp /opt/autozap/scripts/oracle/nginx-autozap.conf.example /etc/nginx/sites-available/autozap
+sudo ln -sf /etc/nginx/sites-available/autozap /etc/nginx/sites-enabled/autozap
+sudo nginx -t && sudo systemctl reload nginx
+sudo certbot --nginx -d api.seudominio.com
+```
+
+No `.env` de produção (VM), ajuste ao menos:
+
+- `NODE_ENV=production`
+- `TRUST_PROXY=1`
+- `FRONTEND_REQUIRE_DESKTOP=0`
+- `WA_CLOUD_ACCESS_TOKEN`, `WA_CLOUD_PHONE_NUMBER_ID`, `WA_CLOUD_VERIFY_TOKEN`
+- `FIREBASE_PROJECT_ID`, `FIREBASE_SERVICE_ACCOUNT_PATH` (ou `FIREBASE_CLIENT_EMAIL` + `FIREBASE_PRIVATE_KEY`)
 
 ## Atualização automática (GitHub Releases)
 
@@ -168,49 +208,20 @@ security find-identity -v -p codesigning
 xcrun notarytool --version
 ```
 
-## Webhook oficial (Meta) sem VPS
+## Webhook oficial (Meta) direto na API da VM
 
-Este projeto suporta webhook serverless com **Firebase Functions**:
+Com API em produção na Oracle VM, configure o webhook da Meta diretamente no backend principal:
 
-- A Function pública recebe os eventos da Meta.
-- O payload é enfileirado no Firestore.
-- O app desktop consome a fila (`_whatsapp_webhooks`) e grava tickets/mensagens localmente.
+- Callback URL: `https://api.seudominio.com/whatsapp/webhook`
+- Verify Token: mesmo valor de `WA_CLOUD_VERIFY_TOKEN` do `.env` do servidor
+- Evento: `messages`
 
-### 1) Preparar Function
+Validação opcional de assinatura:
 
-```bash
-cd functions
-npm install
-cp .env.example .env
-```
+- Defina `WA_CLOUD_APP_SECRET` no servidor
+- Mantenha o App Secret correto no app Meta para validar `X-Hub-Signature-256`
 
-Preencha `functions/.env`:
-
-- `AUTOZAP_FUNCTION_REGION=us-central1`
-- `WA_CLOUD_VERIFY_TOKEN` (o mesmo do painel Meta)
-- `WA_CLOUD_APP_SECRET` (opcional, recomendado para validar assinatura)
-- `AUTOZAP_DB_ROOT=autozap`
-- `AUTOZAP_ACCOUNT_ID=default`
-- `AUTOZAP_WEBHOOK_QUEUE_COLLECTION=_whatsapp_webhooks`
-
-### 2) Deploy da Function
-
-```bash
-cd /Users/nycolazs/Documents/autozap
-npx firebase-tools deploy --only functions:whatsappWebhook --project autozap-4537e
-```
-
-URL final de callback (padrão):
-
-- `https://us-central1-autozap-4537e.cloudfunctions.net/whatsappWebhook`
-
-### 3) Configurar no Meta Developers
-
-- Callback URL: URL da Function acima
-- Verify Token: igual ao `WA_CLOUD_VERIFY_TOKEN` da Function
-- Assinar evento `messages`
-
-Se definir `WA_CLOUD_APP_SECRET` na Function, mantenha o App Secret correto no app Meta para assinatura `X-Hub-Signature-256`.
+Observação: o modo serverless com Firebase Functions continua disponível como fallback, mas não é necessário para produção em VM.
 
 ## Rotas principais
 
@@ -223,7 +234,7 @@ Se definir `WA_CLOUD_APP_SECRET` na Function, mantenha o App Secret correto no a
 
 - `FRONTEND_REQUIRE_DESKTOP=1` mantém o frontend acessível apenas via app desktop.
 - O Firestore é sincronizado automaticamente após mutações no banco local.
-- O backend desktop também pode consumir webhooks enfileirados no Firestore (`FIREBASE_WEBHOOK_QUEUE_ENABLED=1`).
+- O consumidor de fila de webhook no Firestore é opcional e vem desativado por padrão (`FIREBASE_WEBHOOK_QUEUE_ENABLED=0`).
 - Em troca de conta ativa, o sistema tenta restaurar dados do Firebase para o SQLite local.
 - Se o banco estiver limpo (sem admin), o app inicia em `/welcome` e pede criação do primeiro admin.
 

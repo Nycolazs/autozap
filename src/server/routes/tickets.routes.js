@@ -377,9 +377,15 @@ function createTicketsRouter({
   }
 
   function resolveTicketJid(ticket) {
-    const fallback = ticket.phone && String(ticket.phone).includes('@')
-      ? String(ticket.phone)
-      : `${ticket.phone}@s.whatsapp.net`;
+    const normalizeOutboundPhone = (value) => {
+      const digits = String(value || '').replace(/\D/g, '');
+      if (!digits) return null;
+      if (digits.length < 8 || digits.length > 25) return null;
+      return digits;
+    };
+
+    const ticketPhone = normalizeOutboundPhone(ticket && ticket.phone);
+    const fallback = ticketPhone ? `${ticketPhone}@s.whatsapp.net` : '';
 
     try {
       const row = db.prepare(
@@ -389,8 +395,10 @@ function createTicketsRouter({
 
       const key = JSON.parse(row.whatsapp_key);
       const remoteJid = key && typeof key.remoteJid === 'string' ? key.remoteJid.trim() : '';
-      if (remoteJid && (remoteJid.endsWith('@lid') || remoteJid.endsWith('@s.whatsapp.net'))) {
-        return remoteJid;
+      if (remoteJid && remoteJid.endsWith('@s.whatsapp.net')) {
+        const remotePhone = normalizeOutboundPhone(remoteJid.split('@')[0]);
+        if (!remotePhone) return fallback;
+        if (!ticketPhone || remotePhone === ticketPhone) return remoteJid;
       }
     } catch (_) {}
 

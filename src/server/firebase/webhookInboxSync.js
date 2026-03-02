@@ -17,7 +17,7 @@ const SNAPSHOT_ENABLED = !['0', 'false', 'no', 'off']
   .includes(String(process.env.FIREBASE_WEBHOOK_SNAPSHOT_ENABLED || '1').trim().toLowerCase());
 
 function isEnabledByEnv() {
-  const flag = String(process.env.FIREBASE_WEBHOOK_QUEUE_ENABLED || '1').trim().toLowerCase();
+  const flag = String(process.env.FIREBASE_WEBHOOK_QUEUE_ENABLED || '0').trim().toLowerCase();
   return !['0', 'false', 'no', 'off'].includes(flag);
 }
 
