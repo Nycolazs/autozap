@@ -377,6 +377,7 @@ export default function AgentPage() {
   const lastTicketUpdatedAtRef = useRef<Record<number, number>>({});
   const localUnreadInitializedRef = useRef(false);
   const realtimeRefreshTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const realtimeMessagesRefreshTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const deepLinkHandledRef = useRef(false);
 
   const queryTicketId = useMemo(() => {
@@ -1429,13 +1430,28 @@ export default function AgentPage() {
     };
   }, [loadPreviewFallbackForTicket, session, tickets]);
 
-  const queueRealtimeRefresh = useCallback(() => {
-    if (realtimeRefreshTimeoutRef.current) return;
-    realtimeRefreshTimeoutRef.current = setTimeout(() => {
-      realtimeRefreshTimeoutRef.current = null;
-      void loadTickets(true);
-    }, 120);
-  }, [loadTickets]);
+  const queueRealtimeRefresh = useCallback((eventTicketId?: number | null) => {
+    if (!realtimeRefreshTimeoutRef.current) {
+      realtimeRefreshTimeoutRef.current = setTimeout(() => {
+        realtimeRefreshTimeoutRef.current = null;
+        void loadTickets(true);
+      }, 120);
+    }
+
+    const selectedTicketId = Number(selectedTicketIdRef.current || 0);
+    if (!Number.isFinite(selectedTicketId) || selectedTicketId <= 0) return;
+
+    const normalizedEventTicketId = Number(eventTicketId || 0);
+    if (normalizedEventTicketId > 0 && normalizedEventTicketId !== selectedTicketId) return;
+
+    if (realtimeMessagesRefreshTimeoutRef.current) return;
+    realtimeMessagesRefreshTimeoutRef.current = setTimeout(() => {
+      realtimeMessagesRefreshTimeoutRef.current = null;
+      const activeTicketId = Number(selectedTicketIdRef.current || 0);
+      if (!Number.isFinite(activeTicketId) || activeTicketId <= 0) return;
+      void loadMessages(activeTicketId, { silent: true });
+    }, 80);
+  }, [loadMessages, loadTickets]);
 
   useEffect(() => {
     if (!session) return;
@@ -1457,15 +1473,17 @@ export default function AgentPage() {
     };
 
     const handleRealtimeMessage = (raw: string) => {
-      let parsed: { type?: string } | null = null;
+      let parsed: { type?: string; data?: { ticketId?: number | string } } | null = null;
       try {
-        parsed = JSON.parse(String(raw || '')) as { type?: string };
+        parsed = JSON.parse(String(raw || '')) as { type?: string; data?: { ticketId?: number | string } };
       } catch (_) {
         parsed = null;
       }
       if (!parsed || !parsed.type) return;
       if (parsed.type !== 'message' && parsed.type !== 'ticket') return;
-      queueRealtimeRefresh();
+
+      const eventTicketId = Number(parsed.data && parsed.data.ticketId ? parsed.data.ticketId : 0);
+      queueRealtimeRefresh(eventTicketId || null);
     };
 
     const connect = () => {
@@ -1504,6 +1522,10 @@ export default function AgentPage() {
       if (realtimeRefreshTimeoutRef.current) {
         clearTimeout(realtimeRefreshTimeoutRef.current);
         realtimeRefreshTimeoutRef.current = null;
+      }
+      if (realtimeMessagesRefreshTimeoutRef.current) {
+        clearTimeout(realtimeMessagesRefreshTimeoutRef.current);
+        realtimeMessagesRefreshTimeoutRef.current = null;
       }
       if (ws) {
         try { ws.close(); } catch (_) {}
