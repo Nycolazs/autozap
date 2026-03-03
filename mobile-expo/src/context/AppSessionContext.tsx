@@ -1,6 +1,6 @@
 import Constants from 'expo-constants';
 import React, { createContext, useCallback, useContext, useEffect, useMemo, useState } from 'react';
-import { configureApiClient, getApiBase as readConfiguredApiBase } from '../api/client';
+import { ApiRequestError, configureApiClient, getApiBase as readConfiguredApiBase } from '../api/client';
 import { getHasAdmin, login as loginRequest, setupAdmin as setupAdminRequest } from '../api/auth';
 import { getAuthSession, logout as logoutRequest } from '../api/chat';
 import { readApiBase, readAuthToken, writeApiBase, writeAuthToken } from '../lib/storage';
@@ -30,6 +30,14 @@ function readDefaultApiBase(): string {
   const fromExtra = normalizeApiBase(String(extra.apiBaseUrl || ''));
   if (fromExtra) return fromExtra;
   return 'http://127.0.0.1:3000';
+}
+
+function shouldTryFallbackApiBase(error: unknown): boolean {
+  if (!(error instanceof ApiRequestError)) return false;
+  if (error.status === 404) return true;
+  if (error.status === 0) return true;
+  if (error.status >= 500) return true;
+  return false;
 }
 
 export function AppSessionProvider({ children }: { children: React.ReactNode }) {
@@ -122,17 +130,47 @@ export function AppSessionProvider({ children }: { children: React.ReactNode }) 
     (async () => {
       try {
         const [savedApiBase, savedToken] = await Promise.all([readApiBase(), readAuthToken()]);
-        const nextApiBase = normalizeApiBase(savedApiBase || readDefaultApiBase());
+        const defaultApiBase = normalizeApiBase(readDefaultApiBase());
+        const nextApiBase = normalizeApiBase(savedApiBase || defaultApiBase);
         const nextToken = String(savedToken || '').trim();
+        const apiBaseCandidates = [nextApiBase];
+        if (defaultApiBase && defaultApiBase !== nextApiBase) {
+          apiBaseCandidates.push(defaultApiBase);
+        }
 
         if (disposed) return;
 
         setApiBaseState(nextApiBase);
         setToken(nextToken);
         applyClientConfig(nextApiBase, nextToken);
+        let setup = null as null | { hasAdmin: boolean };
+        let effectiveApiBase = nextApiBase;
 
-        const setup = await getHasAdmin();
+        for (let index = 0; index < apiBaseCandidates.length; index += 1) {
+          const candidate = normalizeApiBase(apiBaseCandidates[index]);
+          if (!candidate) continue;
+          effectiveApiBase = candidate;
+          applyClientConfig(candidate, nextToken);
+
+          try {
+            setup = await getHasAdmin();
+            break;
+          } catch (error) {
+            const isLast = index >= (apiBaseCandidates.length - 1);
+            if (!shouldTryFallbackApiBase(error) || isLast) {
+              throw error;
+            }
+          }
+        }
+
         if (disposed) return;
+        if (!setup) throw new Error('Falha ao carregar configuração do backend.');
+
+        if (effectiveApiBase !== nextApiBase) {
+          setApiBaseState(effectiveApiBase);
+          await writeApiBase(effectiveApiBase);
+          applyClientConfig(effectiveApiBase, nextToken);
+        }
 
         if (!setup.hasAdmin) {
           setHasAdmin(false);
